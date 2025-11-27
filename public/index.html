@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Virtuoso Web Piano</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module">
+      import { pianoApp } from "/app.js";
+      window.pianoApp = pianoApp;
+    </script>
+    <script
+      defer
+      src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"
+    ></script>
+  </head>
+  <body
+    x-data="pianoApp()"
+    x-init="init()"
+    @keydown.window="handleKeyDown($event)"
+    @keyup.window="handleKeyUp($event)"
+  >
+    <div class="controls">
+      <div class="controls-left">
+        <h1>🎹 Virtuoso</h1>
+
+        <div class="control-group">
+          <label>Mode:</label>
+          <select x-model="inputMode" @change="updateKeyLabels()">
+            <option value="real">Real Keys (q2w3...)</option>
+            <option value="max">Max Keys (123...)</option>
+            <option value="disabled">Disabled</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Start Octave:</label>
+          <input
+            type="number"
+            x-model.number="octaveOffset"
+            @change="updateKeyLabels()"
+            min="1"
+            max="6"
+            style="width: 40px"
+          />
+        </div>
+
+        <div class="control-group">
+          <label>Sustain:</label>
+          <select x-model="sustainMode" @change="handleSustainModeChange()">
+            <option value="toggle">Toggle</option>
+            <option value="hold">Hold</option>
+          </select>
+          <button
+            x-text="`Sustain: ${sustain ? 'ON' : 'OFF'}`"
+            :class="{ active: sustain }"
+            @click="toggleSustain()"
+          >
+            Sustain: OFF
+          </button>
+          <button
+            :class="{ active: showNotes }"
+            @click="showNotes = !showNotes; updateKeyLabels()"
+          >
+            Show Notes
+          </button>
+        </div>
+
+        <div class="control-group">
+          <label>Metronome:</label>
+          <input
+            type="number"
+            x-model.number="bpm"
+            min="30"
+            max="300"
+            style="width: 50px"
+          />
+          <span>BPM</span>
+          <select x-model.number="timeSig">
+            <option value="4">4/4</option>
+            <option value="3">3/4</option>
+          </select>
+          <button
+            x-text="metronomeOn ? 'Stop' : 'Start'"
+            :class="{ active: metronomeOn }"
+            @click="toggleMetronome()"
+          >
+            Start
+          </button>
+        </div>
+
+        <div class="control-group">
+          <button
+            x-text="isRecording ? '■ Stop & Save' : '● Record'"
+            :class="{ active: isRecording }"
+            style="color: #ff5555"
+            @click="toggleRecord()"
+          >
+            ● Record
+          </button>
+          <div x-show="isRecording" x-text="recordingTime" class="hidden">
+            00:00
+          </div>
+        </div>
+      </div>
+
+      <div class="controls-right">
+        <button
+          @click="showMarketplace = true; loadMarketplaceSongs()"
+          style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+        >
+          🎵 Marketplace
+        </button>
+      </div>
+    </div>
+
+    <div class="piano-container">
+      <div class="piano-keys" :style="{ width: pianoWidth + 'px' }">
+        <template x-for="key in pianoKeys" :key="key.midi">
+          <div
+            :id="`key-${key.midi}`"
+            :class="`key ${key.isBlack ? 'black' : 'white'}`"
+            :style="key.isBlack ? { left: key.leftPos + 'px' } : {}"
+            @mousedown="triggerNoteOn(key.midi)"
+            @mouseup="triggerNoteOff(key.midi)"
+            @mouseleave="triggerNoteOff(key.midi)"
+          >
+            <span
+              class="key-note"
+              x-text="`${key.noteName}${key.octave}`"
+              :class="{ hidden: !showNotes }"
+            ></span>
+            <span class="key-bind" x-text="key.keyBind"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <div class="recorder-panel">
+      <div
+        style="
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 5px;
+        "
+      >
+        <strong>Saved Recordings</strong>
+        <label
+          >Playback Vol:
+          <input
+            type="range"
+            x-model.number="playbackVol"
+            min="0"
+            max="1"
+            step="0.1"
+        /></label>
+      </div>
+      <div>
+        <template x-for="(rec, index) in recordings" :key="index">
+          <div class="track-item">
+            <span x-text="`${rec.name} (${rec.data.length} notes)`"></span>
+            <div>
+              <span
+                x-show="playingRecordings.has(index)"
+                style="margin-right: 10px; color: var(--accent)"
+                x-text="getPlaybackTime(index)"
+              ></span>
+              <button
+                x-text="playingRecordings.has(index) ? '⏸ Playing' : '▶ Play'"
+                @click="playRecording(index)"
+              ></button>
+              <button class="danger" @click="deleteRecording(index)">X</button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Marketplace Modal -->
+    <div
+      x-show="showMarketplace"
+      class="modal-overlay"
+      @click.self="showMarketplace = false; stopPreview()"
+      x-transition
+    >
+      <div class="modal-content" @click.stop>
+        <div class="modal-header">
+          <h2>🎵 Song Marketplace</h2>
+          <button
+            class="modal-close"
+            @click="showMarketplace = false; stopPreview()"
+          >
+            ×
+          </button>
+        </div>
+        <div class="upload-section">
+          <div
+            class="upload-area"
+            @click="$refs.midiInput.click()"
+            @dragover.prevent="uploadDragOver = true"
+            @dragleave.prevent="uploadDragOver = false"
+            @drop.prevent="handleFileDrop($event)"
+            :class="{ dragover: uploadDragOver }"
+          >
+            <div>🎵 Upload MIDI File</div>
+            <div style="font-size: 0.8rem; color: #aaa; margin-top: 5px">
+              Drag & drop or click to select<br />
+              <span style="font-size: 0.75rem"
+                >Supports: MIDI (.mid, .midi)</span
+              >
+            </div>
+            <input
+              type="file"
+              x-ref="midiInput"
+              accept=".mid,.midi"
+              @change="handleFileUpload($event)"
+            />
+          </div>
+          <div
+            x-show="uploadStatus"
+            class="upload-status"
+            :class="uploadStatusType"
+            x-text="uploadStatus"
+          ></div>
+
+          <!-- Preview and Edit Section -->
+          <template x-if="uploadPreview">
+            <div
+              class="upload-preview"
+              style="
+                margin-top: 20px;
+                padding: 15px;
+                background: #2a2a2a;
+                border-radius: 6px;
+                border: 1px solid #444;
+              "
+            >
+              <div style="margin-bottom: 15px">
+                <strong style="color: var(--accent)">Preview & Edit</strong>
+              </div>
+
+              <div
+                style="
+                  display: flex;
+                  flex-direction: column;
+                  gap: 10px;
+                  margin-bottom: 15px;
+                "
+              >
+                <div>
+                  <label
+                    style="
+                      display: block;
+                      margin-bottom: 5px;
+                      font-size: 0.85rem;
+                    "
+                    >Song Name:</label
+                  >
+                  <input
+                    type="text"
+                    x-model="uploadPreview.name"
+                    style="
+                      width: 100%;
+                      padding: 8px;
+                      background: #333;
+                      color: white;
+                      border: 1px solid #555;
+                      border-radius: 4px;
+                    "
+                  />
+                </div>
+
+                <div>
+                  <label
+                    style="
+                      display: block;
+                      margin-bottom: 5px;
+                      font-size: 0.85rem;
+                    "
+                    >Composer/Author:</label
+                  >
+                  <input
+                    type="text"
+                    x-model="uploadPreview.composer"
+                    style="
+                      width: 100%;
+                      padding: 8px;
+                      background: #333;
+                      color: white;
+                      border: 1px solid #555;
+                      border-radius: 4px;
+                    "
+                  />
+                </div>
+
+                <div>
+                  <label
+                    style="
+                      display: block;
+                      margin-bottom: 5px;
+                      font-size: 0.85rem;
+                    "
+                    >Description:</label
+                  >
+                  <textarea
+                    x-model="uploadPreview.description"
+                    rows="2"
+                    style="
+                      width: 100%;
+                      padding: 8px;
+                      background: #333;
+                      color: white;
+                      border: 1px solid #555;
+                      border-radius: 4px;
+                      resize: vertical;
+                    "
+                  ></textarea>
+                </div>
+
+                <div>
+                  <label
+                    style="
+                      display: block;
+                      margin-bottom: 5px;
+                      font-size: 0.85rem;
+                    "
+                  >
+                    Tempo Multiplier:
+                    <span
+                      x-text="uploadPreview.tempoMultiplier.toFixed(2)"
+                    ></span
+                    >x
+                  </label>
+                  <input
+                    type="range"
+                    x-model.number="uploadPreview.tempoMultiplier"
+                    min="0.05"
+                    max="4"
+                    step="0.05"
+                    @input="updatePreviewTempo()"
+                    style="width: 100%"
+                  />
+                  <div
+                    style="
+                      display: flex;
+                      justify-content: space-between;
+                      font-size: 0.75rem;
+                      color: #aaa;
+                      margin-top: 5px;
+                    "
+                  >
+                    <span>0.05x (Slower)</span>
+                    <span>1.0x (Normal)</span>
+                    <span>4.0x (Faster)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display: flex; gap: 10px; margin-top: 15px">
+                <button
+                  class="primary"
+                  @click="playPreview()"
+                  x-text="previewPlaying ? '⏸ Stop Preview' : '▶ Play Preview'"
+                ></button>
+                <button
+                  @click="saveUploadedSong()"
+                  style="background: var(--accent); color: white"
+                >
+                  💾 Save to Songs
+                </button>
+                <button class="danger" @click="cancelUpload()">✕ Cancel</button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="song-list">
+          <template x-for="(song, index) in marketplaceSongs" :key="index">
+            <div class="song-item">
+              <div class="song-info">
+                <div class="song-title" x-text="song.name"></div>
+                <div class="song-meta">
+                  <span x-text="song.composer"></span>
+                  <span x-show="song.description"> • </span>
+                  <span x-text="song.description"></span>
+                  <span> • </span>
+                  <span
+                    x-text="`${song.data ? song.data.length : 0} notes`"
+                  ></span>
+                </div>
+              </div>
+              <div class="song-actions">
+                <button
+                  class="primary"
+                  @click="importSong(song)"
+                  x-text="isSongImported(song) ? '✓ Imported' : '⬇ Download'"
+                  :disabled="isSongImported(song)"
+                >
+                  ⬇ Download
+                </button>
+              </div>
+            </div>
+          </template>
+          <div
+            x-show="marketplaceSongs.length === 0"
+            style="text-align: center; color: #aaa; padding: 20px"
+          >
+            Loading songs...
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

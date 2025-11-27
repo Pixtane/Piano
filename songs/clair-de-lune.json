@@ -1,0 +1,38 @@
+{
+  "name": "Clair de Lune",
+  "composer": "Claude Debussy",
+  "description": "The opening theme from Clair de Lune",
+  "data": [
+    {"time": 0.0, "type": "on", "midi": 67, "sustain": true},
+    {"time": 0.5, "type": "on", "midi": 64, "sustain": true},
+    {"time": 1.0, "type": "on", "midi": 67, "sustain": true},
+    {"time": 1.5, "type": "on", "midi": 71, "sustain": true},
+    {"time": 2.0, "type": "off", "midi": 67, "sustain": true},
+    {"time": 2.0, "type": "off", "midi": 64, "sustain": true},
+    {"time": 2.0, "type": "off", "midi": 71, "sustain": true},
+    {"time": 2.5, "type": "on", "midi": 72, "sustain": true},
+    {"time": 3.0, "type": "on", "midi": 69, "sustain": true},
+    {"time": 3.5, "type": "on", "midi": 72, "sustain": true},
+    {"time": 4.0, "type": "on", "midi": 76, "sustain": true},
+    {"time": 4.5, "type": "off", "midi": 72, "sustain": true},
+    {"time": 4.5, "type": "off", "midi": 69, "sustain": true},
+    {"time": 4.5, "type": "off", "midi": 76, "sustain": true},
+    {"time": 5.0, "type": "on", "midi": 74, "sustain": true},
+    {"time": 5.5, "type": "on", "midi": 71, "sustain": true},
+    {"time": 6.0, "type": "on", "midi": 74, "sustain": true},
+    {"time": 6.5, "type": "on", "midi": 77, "sustain": true},
+    {"time": 7.0, "type": "off", "midi": 74, "sustain": true},
+    {"time": 7.0, "type": "off", "midi": 71, "sustain": true},
+    {"time": 7.0, "type": "off", "midi": 77, "sustain": true},
+    {"time": 7.5, "type": "on", "midi": 76, "sustain": true},
+    {"time": 8.0, "type": "on", "midi": 72, "sustain": true},
+    {"time": 8.5, "type": "on", "midi": 69, "sustain": true},
+    {"time": 9.0, "type": "on", "midi": 67, "sustain": true},
+    {"time": 9.5, "type": "off", "midi": 76, "sustain": true},
+    {"time": 9.5, "type": "off", "midi": 72, "sustain": true},
+    {"time": 9.5, "type": "off", "midi": 69, "sustain": true},
+    {"time": 9.5, "type": "off", "midi": 67, "sustain": true}
+  ]
+}
+
+
