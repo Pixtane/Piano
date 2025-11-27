@@ -214,11 +214,207 @@ input[type="range"] {
 
 .track-item {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   background: #333;
-  padding: 5px 10px;
+  padding: 10px;
   border-radius: 4px;
+  gap: 8px;
+}
+
+.track-item-header {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
+}
+
+.track-item-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.track-timeline-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.track-timeline {
+  flex: 1;
+  position: relative;
+  height: 6px;
+  background: #555;
+  border-radius: 3px;
+  cursor: pointer;
+  overflow: visible;
+}
+
+.track-timeline-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.1s linear;
+}
+
+.track-timeline-handle {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  background: white;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  cursor: grab;
+  z-index: 10;
+  transition: transform 0.1s;
+}
+
+.track-timeline-handle:active {
+  cursor: grabbing;
+  transform: translate(-50%, -50%) scale(1.2);
+}
+
+.track-timeline-handle:hover {
+  transform: translate(-50%, -50%) scale(1.1);
+}
+
+.repeat-button {
+  background: transparent;
+  border: 1px solid #555;
+  color: #aaa;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+  min-width: 60px;
+}
+
+.repeat-button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.icon-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  background: #444;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.icon-button:hover {
+  background: #555;
+  transform: scale(1.1);
+}
+
+.icon-button.repeat {
+  background: transparent;
+  color: #666;
+  border: 1px solid #555;
+}
+
+.icon-button.repeat.active {
+  background: white;
+  color: white;
+  border-color: white;
+}
+
+.icon-button.play {
+  background: var(--accent);
+  color: white;
+}
+
+.icon-button.play:hover {
+  background: #45a049;
+}
+
+.icon-button.volume {
+  background: transparent;
+  color: #aaa;
+  border: 1px solid #555;
+  position: relative;
+}
+
+.icon-button.volume:hover {
+  background: #555;
+  color: white;
+}
+
+.volume-popover {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 8px;
+  background: var(--panel-bg);
+  border: 1px solid #555;
+  border-radius: 8px;
+  padding: 15px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  min-width: 200px;
+}
+
+.volume-popover::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  right: 20px;
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid var(--panel-bg);
+}
+
+.volume-slider-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.volume-slider-container label {
+  font-size: 0.85rem;
+  color: #aaa;
+  text-align: center;
+}
+
+.volume-slider {
+  width: 100%;
+  height: 6px;
+  background: #555;
+  border-radius: 3px;
+  outline: none;
+  -webkit-appearance: none;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
 }
 
 /* Modal */

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Virtuoso Web Piano</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="/styles.css" />
     <script type="module">
       import { pianoApp } from "/app.js";
@@ -17,9 +18,10 @@
   </head>
   <body
     x-data="pianoApp()"
-    x-init="init()"
+    x-init="init(); $watch('playbackTimerTick', () => { if (window.lucide) lucide.createIcons(); }); $watch('recordings.length', () => { if (window.lucide) lucide.createIcons(); })"
     @keydown.window="handleKeyDown($event)"
     @keyup.window="handleKeyUp($event)"
+    @click="volumePopoverOpen = null"
   >
     <div class="controls">
       <div class="controls-left">
@@ -172,21 +174,109 @@
       <div>
         <template x-for="(rec, index) in recordings" :key="index">
           <div class="track-item">
-            <span x-text="`${rec.name} (${rec.data.length} notes)`"></span>
-            <div>
+            <div class="track-item-header">
+              <span x-text="`${rec.name} (${rec.data.length} notes)`"></span>
+              <div class="track-item-controls">
+                <span
+                  x-show="playingRecordings.has(index)"
+                  style="
+                    margin-right: 10px;
+                    color: var(--accent);
+                    font-size: 0.9rem;
+                  "
+                  x-text="getPlaybackTime(index)"
+                ></span>
+                <button
+                  class="icon-button play"
+                  @click="playRecording(index)"
+                  :title="playingRecordings.has(index) ? 'Pause' : 'Play'"
+                >
+                  <i
+                    data-lucide="play"
+                    x-show="!playingRecordings.has(index)"
+                  ></i>
+                  <i
+                    data-lucide="pause"
+                    x-show="playingRecordings.has(index)"
+                  ></i>
+                </button>
+                <button
+                  class="icon-button repeat"
+                  :class="{ active: recordingRepeat.has(index) }"
+                  @click="toggleRepeat(index)"
+                  title="Toggle repeat"
+                >
+                  <i data-lucide="repeat"></i>
+                </button>
+                <div style="position: relative">
+                  <button
+                    class="icon-button volume"
+                    @click.stop="toggleVolumePopover(index)"
+                    title="Volume"
+                  >
+                    <i data-lucide="volume-2"></i>
+                  </button>
+                  <div
+                    x-show="volumePopoverOpen === index"
+                    class="volume-popover"
+                    @click.stop
+                  >
+                    <div class="volume-slider-container">
+                      <label
+                        x-text="`Volume: ${Math.round((recordingVolumes.get(index) || 0.8) * 100)}%`"
+                      ></label>
+                      <input
+                        type="range"
+                        class="volume-slider"
+                        :value="recordingVolumes.get(index) || 0.8"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        @input="setRecordingVolume(index, $event.target.value)"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <button @click="openEditor(index)" style="background: #4488ff">
+                  Edit
+                </button>
+                <button class="danger" @click="deleteRecording(index)">
+                  X
+                </button>
+              </div>
+            </div>
+            <div
+              x-show="playingRecordings.has(index) || recordingProgress.has(index) || (pausedRecordings && pausedRecordings.has(index))"
+              class="track-timeline-container"
+            >
               <span
-                x-show="playingRecordings.has(index)"
-                style="margin-right: 10px; color: var(--accent)"
-                x-text="getPlaybackTime(index)"
+                style="font-size: 0.8rem; color: #aaa; min-width: 50px"
+                x-text="formatTime(getRecordingCurrentTime(index))"
               ></span>
-              <button
-                x-text="playingRecordings.has(index) ? '⏸ Playing' : '▶ Play'"
-                @click="playRecording(index)"
-              ></button>
-              <button @click="openEditor(index)" style="background: #4488ff">
-                Edit
-              </button>
-              <button class="danger" @click="deleteRecording(index)">X</button>
+              <div
+                class="track-timeline"
+                @click="seekRecording(index, $event)"
+                @mousedown="startTimelineDrag(index, $event)"
+              >
+                <div
+                  class="track-timeline-progress"
+                  :style="`width: ${getRecordingProgress(index) * 100}%`"
+                ></div>
+                <div
+                  class="track-timeline-handle"
+                  :style="`left: ${getRecordingProgress(index) * 100}%`"
+                  @mousedown.stop="startTimelineDrag(index, $event)"
+                ></div>
+              </div>
+              <span
+                style="
+                  font-size: 0.8rem;
+                  color: #aaa;
+                  min-width: 50px;
+                  text-align: right;
+                "
+                x-text="formatTime(getRecordingDuration(index))"
+              ></span>
             </div>
           </div>
         </template>

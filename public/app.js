@@ -1,4 +1,9 @@
-import { initAudio, playMetronomeBeat } from "/src/audio.js";
+import {
+  initAudio,
+  playMetronomeBeat,
+  playMIDINote,
+  stopMIDINote,
+} from "/src/audio.js";
 import {
   initPiano,
   updateKeyLabels,
@@ -50,8 +55,14 @@ function pianoApp() {
     pianoWidth: 0,
     recordings: [],
     playingRecordings: new Map(),
+    recordingRepeat: new Map(), // Track which recordings have repeat enabled
+    recordingProgress: new Map(), // Track which recordings have been played (to show timeline)
+    recordingVolumes: new Map(), // Track volume per recording (0-1)
+    pausedRecordings: new Map(), // Track paused positions
     playbackTimerInterval: null,
     playbackTimerTick: 0,
+    timelineDragging: null, // { index, startX, startProgress }
+    volumePopoverOpen: null, // Track which recording has volume popover open
     showMarketplace: false,
     marketplaceSongs: [],
     uploadDragOver: false,
@@ -72,12 +83,20 @@ function pianoApp() {
     editorResizeObserver: null,
     editorPlayheadInterval: null,
     editorSpeedCoefficient: 1.0,
+    editorInitTimeout: null,
 
     init() {
       this.initPiano();
       this.loadRecordings();
       this.startPlaybackTimer();
       this.loadMarketplaceSongs();
+
+      // Initialize Lucide icons
+      this.$nextTick(() => {
+        if (window.lucide) {
+          lucide.createIcons();
+        }
+      });
     },
 
     initPiano() {
@@ -258,9 +277,18 @@ function pianoApp() {
 
     loadRecordings() {
       this.recordings = loadRecordings();
+      // Re-initialize Lucide icons after recordings load
+      this.$nextTick(() => {
+        if (window.lucide) {
+          lucide.createIcons();
+        }
+      });
     },
 
     getPlaybackTime(index) {
+      // Access playbackTimerTick to make this reactive
+      this.playbackTimerTick;
+
       const playbackInfo = this.playingRecordings.get(index);
       if (!playbackInfo) return "";
 
@@ -268,43 +296,358 @@ function pianoApp() {
       return `${formatTime(elapsed)}/${formatTime(playbackInfo.duration)}`;
     },
 
+    getRecordingDuration(index) {
+      const track = this.recordings[index];
+      if (!track) return 0;
+
+      const sortedEvents = [...track.data].sort((a, b) => a.time - b.time);
+      const lastEvent = sortedEvents[sortedEvents.length - 1];
+      return lastEvent ? lastEvent.time + 0.5 : 0;
+    },
+
+    getRecordingCurrentTime(index) {
+      // Access playbackTimerTick to make this reactive
+      this.playbackTimerTick;
+
+      const playbackInfo = this.playingRecordings.get(index);
+      if (playbackInfo) {
+        const elapsed = (performance.now() - playbackInfo.startTime) / 1000;
+        return Math.min(elapsed, playbackInfo.duration);
+      }
+
+      // If paused, show the paused position
+      if (this.pausedRecordings && this.pausedRecordings.has(index)) {
+        return this.pausedRecordings.get(index);
+      }
+
+      return 0;
+    },
+
+    getRecordingProgress(index) {
+      // Access playbackTimerTick to make this reactive
+      this.playbackTimerTick;
+
+      const playbackInfo = this.playingRecordings.get(index);
+      if (playbackInfo) {
+        const elapsed = (performance.now() - playbackInfo.startTime) / 1000;
+        return playbackInfo.duration > 0
+          ? Math.min(elapsed / playbackInfo.duration, 1)
+          : 0;
+      }
+
+      // If paused, show the paused position
+      if (this.pausedRecordings && this.pausedRecordings.has(index)) {
+        const pausedTime = this.pausedRecordings.get(index);
+        const duration = this.getRecordingDuration(index);
+        return duration > 0 ? Math.min(pausedTime / duration, 1) : 0;
+      }
+
+      return 0;
+    },
+
+    toggleRepeat(index) {
+      if (this.recordingRepeat.has(index)) {
+        this.recordingRepeat.delete(index);
+      } else {
+        this.recordingRepeat.set(index, true);
+      }
+    },
+
+    toggleVolumePopover(index) {
+      if (this.volumePopoverOpen === index) {
+        this.volumePopoverOpen = null;
+      } else {
+        this.volumePopoverOpen = index;
+        // Initialize volume if not set
+        if (!this.recordingVolumes.has(index)) {
+          this.recordingVolumes.set(index, 0.8);
+        }
+      }
+    },
+
+    setRecordingVolume(index, volume) {
+      this.recordingVolumes.set(index, parseFloat(volume));
+      // Update volume for currently playing recording
+      const playbackInfo = this.playingRecordings.get(index);
+      if (playbackInfo) {
+        // Note: Volume changes won't affect already scheduled notes
+        // But we can update the playbackInfo for future use
+        playbackInfo.volume = parseFloat(volume);
+      }
+    },
+
+    getRecordingVolume(index) {
+      return this.recordingVolumes.get(index) || 0.8;
+    },
+
+    startTimelineDrag(index, event) {
+      event.preventDefault();
+      const playbackInfo = this.playingRecordings.get(index);
+      if (!playbackInfo) return;
+
+      const timeline = event.currentTarget.closest(".track-timeline");
+      if (!timeline) return;
+
+      const rect = timeline.getBoundingClientRect();
+      const clickX = event.clientX - rect.left;
+      const progress = Math.max(0, Math.min(1, clickX / rect.width));
+
+      this.timelineDragging = {
+        index: index,
+        startX: event.clientX,
+        startProgress: progress,
+      };
+
+      // Seek immediately on click
+      this.seekToProgress(index, progress);
+
+      // Add global mouse move and up handlers
+      const onMouseMove = (e) => {
+        if (!this.timelineDragging || this.timelineDragging.index !== index)
+          return;
+
+        const newRect = timeline.getBoundingClientRect();
+        const newX = e.clientX - newRect.left;
+        const newProgress = Math.max(0, Math.min(1, newX / newRect.width));
+        this.seekToProgress(index, newProgress);
+      };
+
+      const onMouseUp = () => {
+        this.timelineDragging = null;
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
+
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+
+    seekRecording(index, event) {
+      const timeline = event.currentTarget;
+      const rect = timeline.getBoundingClientRect();
+      const clickX = event.clientX - rect.left;
+      const progress = Math.max(0, Math.min(1, clickX / rect.width));
+      this.seekToProgress(index, progress);
+    },
+
+    seekToProgress(index, progress) {
+      // If not playing, initialize playback info
+      if (!this.playingRecordings.has(index)) {
+        this.recordingProgress.set(index, true);
+
+        const track = this.recordings[index];
+        if (!track) return;
+
+        const onComplete = () => {
+          if (this.recordingRepeat.has(index)) {
+            this.seekToProgress(index, 0);
+          } else {
+            this.stopPlayback(index);
+          }
+        };
+
+        const volume = this.getRecordingVolume(index);
+        const playbackInfo = playRecording(track, volume, onComplete);
+        this.playingRecordings.set(index, playbackInfo);
+        this.startPlaybackTimer();
+      }
+
+      const playbackInfo = this.playingRecordings.get(index);
+      if (!playbackInfo) return;
+
+      // Stop all currently playing notes
+      for (let midi = 21; midi <= 108; midi++) {
+        const noteName = NOTES[midi % 12] + Math.floor(midi / 12 - 1);
+        try {
+          stopMIDINote(noteName);
+        } catch (e) {
+          // Ignore errors
+        }
+      }
+
+      // Remove all active key classes
+      document.querySelectorAll(".key.active").forEach((el) => {
+        el.classList.remove("active");
+      });
+
+      const newTime = progress * playbackInfo.duration;
+      playbackInfo.startTime = performance.now() - newTime * 1000;
+
+      // Cancel all existing timers
+      stopPlayback(playbackInfo);
+      playbackInfo.nodes = [];
+
+      // Restart playback from new position
+      const track = this.recordings[index];
+      if (!track) return;
+
+      const sortedEvents = [...track.data].sort((a, b) => a.time - b.time);
+
+      sortedEvents.forEach((event) => {
+        if (event.time < newTime) {
+          return;
+        }
+
+        const delayMs = (event.time - newTime) * 1000;
+
+        const timer = setTimeout(() => {
+          const midi = event.midi;
+          const noteName = NOTES[midi % 12] + Math.floor(midi / 12 - 1);
+          const keyEl = document.getElementById(`key-${midi}`);
+
+          if (event.type === "on") {
+            if (keyEl) keyEl.classList.add("active");
+            const volume = this.getRecordingVolume(index);
+            playMIDINote(midi, volume);
+          } else if (event.type === "off") {
+            const wasSustained = event.sustain === true;
+            if (!wasSustained) {
+              stopMIDINote(noteName);
+            }
+            if (keyEl) keyEl.classList.remove("active");
+          }
+        }, delayMs);
+
+        playbackInfo.nodes.push(timer);
+      });
+
+      // Update cleanup timer
+      const remainingTime = playbackInfo.duration - newTime;
+      const cleanupTimer = setTimeout(() => {
+        if (this.recordingRepeat.has(index)) {
+          this.seekToProgress(index, 0);
+        } else {
+          this.stopPlayback(index);
+        }
+      }, remainingTime * 1000 + 100);
+
+      playbackInfo.nodes.push(cleanupTimer);
+    },
+
     startPlaybackTimer() {
       if (this.playbackTimerInterval) return;
       this.playbackTimerInterval = setInterval(() => {
         this.playbackTimerTick++;
+        // Update icons periodically to ensure they stay in sync
+        if (this.playbackTimerTick % 10 === 0) {
+          this.updateIcons();
+        }
       }, 100);
     },
 
     playRecording(index) {
       if (this.playingRecordings.has(index)) {
+        // Pause: save current position and stop
+        const playbackInfo = this.playingRecordings.get(index);
+        const elapsed = (performance.now() - playbackInfo.startTime) / 1000;
+        const pausedTime = Math.min(elapsed, playbackInfo.duration);
+
+        // Store paused position
+        playbackInfo.pausedTime = pausedTime;
+
+        // Stop all currently playing notes
+        for (let midi = 21; midi <= 108; midi++) {
+          const noteName = NOTES[midi % 12] + Math.floor(midi / 12 - 1);
+          try {
+            stopMIDINote(noteName);
+          } catch (e) {
+            // Ignore errors
+          }
+        }
+
+        // Remove all active key classes
+        document.querySelectorAll(".key.active").forEach((el) => {
+          el.classList.remove("active");
+        });
+
         this.stopPlayback(index);
+        this.updateIcons();
         return;
       }
+
+      // Mark that this recording has been played (to show timeline)
+      this.recordingProgress.set(index, true);
 
       const track = this.recordings[index];
       if (!track) return;
 
-      const playbackInfo = playRecording(track, this.playbackVol);
+      const onComplete = () => {
+        if (this.recordingRepeat.has(index)) {
+          // Restart from beginning if repeat is enabled
+          this.stopPlayback(index);
+          this.playRecording(index);
+        } else {
+          this.stopPlayback(index);
+        }
+      };
+
+      // Check if we're resuming from pause
+      let startTime = 0;
+      if (this.pausedRecordings && this.pausedRecordings.has(index)) {
+        startTime = this.pausedRecordings.get(index);
+        this.pausedRecordings.delete(index);
+      }
+
+      const volume = this.getRecordingVolume(index);
+      const playbackInfo = playRecording(track, volume, onComplete, startTime);
       this.playingRecordings.set(index, playbackInfo);
       this.startPlaybackTimer();
+      this.updateIcons();
+    },
+
+    updateIcons() {
+      this.$nextTick(() => {
+        if (window.lucide) {
+          lucide.createIcons();
+        }
+      });
     },
 
     stopPlayback(index) {
       const playbackInfo = this.playingRecordings.get(index);
       if (playbackInfo) {
+        // Preserve pausedTime if it exists
+        const pausedTime = playbackInfo.pausedTime;
         stopPlayback(playbackInfo);
         this.playingRecordings.delete(index);
+
+        // Store paused position for resume if not already stored
+        if (pausedTime === undefined && playbackInfo.startTime) {
+          const elapsed = (performance.now() - playbackInfo.startTime) / 1000;
+          const currentTime = Math.min(elapsed, playbackInfo.duration);
+          // Store in paused recordings map
+          if (!this.pausedRecordings) {
+            this.pausedRecordings = new Map();
+          }
+          this.pausedRecordings.set(index, currentTime);
+        } else if (pausedTime !== undefined) {
+          // Store the explicitly set paused time
+          if (!this.pausedRecordings) {
+            this.pausedRecordings = new Map();
+          }
+          this.pausedRecordings.set(index, pausedTime);
+        }
       }
 
       if (this.playingRecordings.size === 0 && this.playbackTimerInterval) {
         clearInterval(this.playbackTimerInterval);
         this.playbackTimerInterval = null;
       }
+
+      this.updateIcons();
     },
 
     deleteRecording(index) {
       if (this.playingRecordings.has(index)) {
         this.stopPlayback(index);
+      }
+
+      // Remove from repeat, progress, and volume maps
+      this.recordingRepeat.delete(index);
+      this.recordingProgress.delete(index);
+      this.recordingVolumes.delete(index);
+      if (this.volumePopoverOpen === index) {
+        this.volumePopoverOpen = null;
       }
 
       deleteRecording(index);
@@ -318,6 +661,36 @@ function pianoApp() {
         }
       });
       this.playingRecordings = newPlayingRecordings;
+
+      const newRecordingRepeat = new Map();
+      this.recordingRepeat.forEach((value, oldIndex) => {
+        if (oldIndex < index) {
+          newRecordingRepeat.set(oldIndex, value);
+        } else if (oldIndex > index) {
+          newRecordingRepeat.set(oldIndex - 1, value);
+        }
+      });
+      this.recordingRepeat = newRecordingRepeat;
+
+      const newRecordingProgress = new Map();
+      this.recordingProgress.forEach((value, oldIndex) => {
+        if (oldIndex < index) {
+          newRecordingProgress.set(oldIndex, value);
+        } else if (oldIndex > index) {
+          newRecordingProgress.set(oldIndex - 1, value);
+        }
+      });
+      this.recordingProgress = newRecordingProgress;
+
+      const newRecordingVolumes = new Map();
+      this.recordingVolumes.forEach((value, oldIndex) => {
+        if (oldIndex < index) {
+          newRecordingVolumes.set(oldIndex, value);
+        } else if (oldIndex > index) {
+          newRecordingVolumes.set(oldIndex - 1, value);
+        }
+      });
+      this.recordingVolumes = newRecordingVolumes;
 
       this.loadRecordings();
     },
@@ -514,6 +887,32 @@ function pianoApp() {
 
     // Editor methods
     openEditor(recordingIndex) {
+      // Clear any pending initialization timeout
+      if (this.editorInitTimeout) {
+        clearTimeout(this.editorInitTimeout);
+        this.editorInitTimeout = null;
+      }
+
+      // Clean up existing editor resources without closing the modal
+      if (this.editorInstance) {
+        if (this.editorKeyHandler) {
+          window.removeEventListener("keydown", this.editorKeyHandler);
+          this.editorKeyHandler = null;
+        }
+        if (this.editorResizeObserver) {
+          this.editorResizeObserver.disconnect();
+          this.editorResizeObserver = null;
+        }
+        if (this.editorPlaybackInfo) {
+          this.stopEditorPlayback();
+        }
+        if (this.editorPlayheadInterval) {
+          clearInterval(this.editorPlayheadInterval);
+          this.editorPlayheadInterval = null;
+        }
+        this.editorInstance = null;
+      }
+
       this.showEditor = true;
       this.editorPlaying = false;
       this.editorSpeedCoefficient = 1.0; // Reset speed to normal
@@ -532,7 +931,12 @@ function pianoApp() {
       }
 
       // Use setTimeout to ensure DOM is ready
-      setTimeout(() => {
+      this.editorInitTimeout = setTimeout(() => {
+        // Check if editor is still supposed to be open (user might have closed it)
+        if (!this.showEditor) {
+          return;
+        }
+
         let canvas;
         if (this.$refs && this.$refs.editorCanvas) {
           canvas = this.$refs.editorCanvas;
@@ -551,7 +955,8 @@ function pianoApp() {
           timelineHeight: 40,
         });
 
-        this.editorInstance.setNotes(this.editorNotes);
+        // Set notes immediately with the current editorNotes
+        this.editorInstance.setNotes([...this.editorNotes]);
 
         // Sync notes when editor modifies them
         const originalDraw = this.editorInstance.draw.bind(this.editorInstance);
@@ -591,10 +996,18 @@ function pianoApp() {
 
         window.addEventListener("keydown", handleKeyDown);
         this.editorKeyHandler = handleKeyDown;
+
+        this.editorInitTimeout = null;
       }, 100);
     },
 
     closeEditor() {
+      // Clear any pending initialization timeout
+      if (this.editorInitTimeout) {
+        clearTimeout(this.editorInitTimeout);
+        this.editorInitTimeout = null;
+      }
+
       if (this.editorKeyHandler) {
         window.removeEventListener("keydown", this.editorKeyHandler);
         this.editorKeyHandler = null;
