@@ -71,6 +71,7 @@ function pianoApp() {
     editorKeyHandler: null,
     editorResizeObserver: null,
     editorPlayheadInterval: null,
+    editorSpeedCoefficient: 1.0,
 
     init() {
       this.initPiano();
@@ -515,6 +516,7 @@ function pianoApp() {
     openEditor(recordingIndex) {
       this.showEditor = true;
       this.editorPlaying = false;
+      this.editorSpeedCoefficient = 1.0; // Reset speed to normal
 
       if (recordingIndex === null) {
         // Create new
@@ -699,19 +701,20 @@ function pianoApp() {
       const events = notesToEvents(this.editorNotes);
       const filteredEvents = events.filter((event) => event.time >= startTime);
 
-      // Adjust event times relative to playhead
+      // Adjust event times relative to playhead and apply speed coefficient
       const adjustedEvents = filteredEvents.map((event) => ({
         ...event,
-        time: event.time - startTime,
+        time: (event.time - startTime) / this.editorSpeedCoefficient,
       }));
 
-      // Calculate duration from playhead to end
+      // Calculate duration from playhead to end (adjusted for speed)
       const sortedNotes = [...this.editorNotes].sort(
         (a, b) => a.startTime - b.startTime
       );
       const lastNote = sortedNotes[sortedNotes.length - 1];
       const totalDuration = lastNote ? lastNote.endTime + 0.5 : 0;
-      const duration = totalDuration - startTime;
+      const duration =
+        (totalDuration - startTime) / this.editorSpeedCoefficient;
 
       // Play using the playback module
       const playbackInfo = playRecording(
@@ -724,12 +727,12 @@ function pianoApp() {
       this.editorPlaybackInfo.originalStartTime = startTime;
       this.editorPlaybackInfo.totalDuration = totalDuration;
 
-      // Update playhead during playback
+      // Update playhead during playback (account for speed coefficient)
       this.editorPlayheadInterval = setInterval(() => {
         if (!this.editorPlaying || !this.editorInstance) return;
 
         const elapsed = (performance.now() - playbackInfo.startTime) / 1000;
-        const currentTime = startTime + elapsed;
+        const currentTime = startTime + elapsed * this.editorSpeedCoefficient;
 
         if (currentTime >= totalDuration) {
           // Playback finished

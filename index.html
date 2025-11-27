@@ -627,11 +627,15 @@
           margin-bottom: 5px;
         "
       >
-        <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 10px">
           <strong>Saved Recordings</strong>
           <button
             @click="openEditor(null)"
-            style="background: var(--accent); padding: 4px 12px; font-size: 0.85rem;"
+            style="
+              background: var(--accent);
+              padding: 4px 12px;
+              font-size: 0.85rem;
+            "
           >
             + Create
           </button>
@@ -660,7 +664,9 @@
                 x-text="playingRecordings.has(index) ? '⏸ Playing' : '▶ Play'"
                 @click="playRecording(index)"
               ></button>
-              <button @click="openEditor(index)" style="background: #4488ff;">Edit</button>
+              <button @click="openEditor(index)" style="background: #4488ff">
+                Edit
+              </button>
               <button class="danger" @click="deleteRecording(index)">X</button>
             </div>
           </div>
@@ -911,6 +917,35 @@
                 min-width: 200px;
               "
             />
+            <label
+              style="
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-left: 12px;
+                color: #aaa;
+                font-size: 0.9rem;
+              "
+            >
+              Speed:
+              <input
+                type="number"
+                x-model.number="editorSpeedCoefficient"
+                min="0.001"
+                max="10"
+                step="0.001"
+                style="
+                  padding: 4px 8px;
+                  background: #333;
+                  color: white;
+                  border: 1px solid #555;
+                  border-radius: 4px;
+                  font-size: 0.9rem;
+                  width: 70px;
+                "
+                title="Speed coefficient (1.0 = normal, 2.0 = 2x faster, 0.5 = half speed)"
+              />
+            </label>
           </div>
           <div class="editor-toolbar-right">
             <button
@@ -935,10 +970,7 @@
             >
               🗑 Delete
             </button>
-            <button
-              @click="editorSelectAll()"
-              title="Select All (Ctrl+A)"
-            >
+            <button @click="editorSelectAll()" title="Select All (Ctrl+A)">
               ☑ Select All
             </button>
             <button
@@ -959,13 +991,18 @@
         <div class="editor-footer">
           <div class="editor-info">
             <span x-text="`${editorNotes.length} notes`"></span>
-            <span x-show="editorSelectedCount > 0"
-              x-text="`${editorSelectedCount} selected`"></span>
+            <span
+              x-show="editorSelectedCount > 0"
+              x-text="`${editorSelectedCount} selected`"
+            ></span>
           </div>
           <div class="editor-actions">
-            <button @click="editorPlay()" x-text="editorPlaying ? '⏸ Stop' : '▶ Play'"></button>
+            <button
+              @click="editorPlay()"
+              x-text="editorPlaying ? '⏸ Stop' : '▶ Play'"
+            ></button>
             <button @click="closeEditor()" class="danger">Cancel</button>
-            <button @click="editorSave()" style="background: var(--accent);">
+            <button @click="editorSave()" style="background: var(--accent)">
               💾 Save
             </button>
           </div>
@@ -978,7 +1015,11 @@
        * 🎹 PIANO APP LOGIC - Alpine.js Version
        */
 
-      import { SongEditor, eventsToNotes, notesToEvents } from "./src/songEditor.js";
+      import {
+        SongEditor,
+        eventsToNotes,
+        notesToEvents,
+      } from "./src/songEditor.js";
 
       // Constants
       const REAL_KEYS_MAP = "q2w3er5t6y7ui9o0pzsxdcfvbhnjm,l.;/'";

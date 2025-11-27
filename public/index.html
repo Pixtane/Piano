@@ -455,6 +455,35 @@
                 min-width: 200px;
               "
             />
+            <label
+              style="
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-left: 12px;
+                color: #aaa;
+                font-size: 0.9rem;
+              "
+            >
+              Speed:
+              <input
+                type="number"
+                x-model.number="editorSpeedCoefficient"
+                min="0.1"
+                max="10"
+                step="0.1"
+                style="
+                  padding: 4px 8px;
+                  background: #333;
+                  color: white;
+                  border: 1px solid #555;
+                  border-radius: 4px;
+                  font-size: 0.9rem;
+                  width: 70px;
+                "
+                title="Speed coefficient (1.0 = normal, 2.0 = 2x faster, 0.5 = half speed)"
+              />
+            </label>
           </div>
           <div class="editor-toolbar-right">
             <button
