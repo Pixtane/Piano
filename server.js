@@ -140,16 +140,22 @@ function parseMidiFile(arrayBuffer, fileName) {
             if (i >= data.length) break;
             const metaType = data[i++];
 
-            if (metaType === 0x51 && i + 3 <= data.length) {
+            // Read length byte (required for all meta events)
+            if (i >= data.length) break;
+            const metaLength = data[i++];
+
+            if (
+              metaType === 0x51 &&
+              metaLength === 0x03 &&
+              i + 3 <= data.length
+            ) {
               // Tempo change
               const tempoBytes = data.slice(i, i + 3);
               tempo =
                 (tempoBytes[0] << 16) | (tempoBytes[1] << 8) | tempoBytes[2];
               i += 3;
             } else {
-              // Other meta events - read length (single byte for most meta events)
-              if (i >= data.length) break;
-              const metaLength = data[i++];
+              // Other meta events - skip the data
               if (i + metaLength <= data.length) {
                 i += metaLength;
               } else {
