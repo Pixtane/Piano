@@ -269,6 +269,88 @@
         background: #444;
       }
 
+      /* Song Editor */
+      .editor-modal {
+        max-width: 95%;
+        width: 95%;
+        max-height: 95vh;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .editor-modal .modal-header {
+        margin: 0;
+        padding: 20px 25px;
+        border-bottom: 1px solid #444;
+      }
+
+      .editor-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px 25px;
+        background: #252525;
+        border-bottom: 1px solid #444;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .editor-toolbar-left,
+      .editor-toolbar-right {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .editor-toolbar-right button {
+        padding: 6px 12px;
+        font-size: 0.85rem;
+      }
+
+      .editor-toolbar-right button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .editor-container {
+        flex: 1;
+        overflow: hidden;
+        position: relative;
+        background: #1a1a1a;
+        min-height: 500px;
+        height: 60vh;
+      }
+
+      .editor-canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        cursor: default;
+      }
+
+      .editor-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px 25px;
+        background: #252525;
+        border-top: 1px solid #444;
+        gap: 15px;
+      }
+
+      .editor-info {
+        display: flex;
+        gap: 15px;
+        color: #aaa;
+        font-size: 0.9rem;
+      }
+
+      .editor-actions {
+        display: flex;
+        gap: 10px;
+      }
+
       .song-list {
         display: flex;
         flex-direction: column;
@@ -545,7 +627,15 @@
           margin-bottom: 5px;
         "
       >
-        <strong>Saved Recordings</strong>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <strong>Saved Recordings</strong>
+          <button
+            @click="openEditor(null)"
+            style="background: var(--accent); padding: 4px 12px; font-size: 0.85rem;"
+          >
+            + Create
+          </button>
+        </div>
         <label
           >Playback Vol:
           <input
@@ -570,6 +660,7 @@
                 x-text="playingRecordings.has(index) ? '⏸ Playing' : '▶ Play'"
                 @click="playRecording(index)"
               ></button>
+              <button @click="openEditor(index)" style="background: #4488ff;">Edit</button>
               <button class="danger" @click="deleteRecording(index)">X</button>
             </div>
           </div>
@@ -792,10 +883,102 @@
       </div>
     </div>
 
-    <script>
+    <!-- Song Editor Modal -->
+    <div
+      x-show="showEditor"
+      class="modal-overlay"
+      @click.self="closeEditor()"
+      x-transition
+    >
+      <div class="modal-content editor-modal" @click.stop>
+        <div class="modal-header">
+          <h2>🎼 Song Editor</h2>
+          <button class="modal-close" @click="closeEditor()">×</button>
+        </div>
+        <div class="editor-toolbar">
+          <div class="editor-toolbar-left">
+            <input
+              type="text"
+              x-model="editorName"
+              placeholder="Song name..."
+              style="
+                padding: 6px 12px;
+                background: #333;
+                color: white;
+                border: 1px solid #555;
+                border-radius: 4px;
+                font-size: 0.9rem;
+                min-width: 200px;
+              "
+            />
+          </div>
+          <div class="editor-toolbar-right">
+            <button
+              @click="editorCopy()"
+              :disabled="editorSelectedCount === 0"
+              title="Copy (Ctrl+C)"
+            >
+              📋 Copy
+            </button>
+            <button
+              @click="editorPaste()"
+              :disabled="editorClipboard.length === 0"
+              title="Paste (Ctrl+V)"
+            >
+              📄 Paste
+            </button>
+            <button
+              @click="editorDelete()"
+              :disabled="editorSelectedCount === 0"
+              class="danger"
+              title="Delete (Delete)"
+            >
+              🗑 Delete
+            </button>
+            <button
+              @click="editorSelectAll()"
+              title="Select All (Ctrl+A)"
+            >
+              ☑ Select All
+            </button>
+            <button
+              @click="editorDeselectAll()"
+              :disabled="editorSelectedCount === 0"
+            >
+              ☐ Deselect
+            </button>
+          </div>
+        </div>
+        <div class="editor-container">
+          <canvas
+            x-ref="editorCanvas"
+            class="editor-canvas"
+            @contextmenu.prevent
+          ></canvas>
+        </div>
+        <div class="editor-footer">
+          <div class="editor-info">
+            <span x-text="`${editorNotes.length} notes`"></span>
+            <span x-show="editorSelectedCount > 0"
+              x-text="`${editorSelectedCount} selected`"></span>
+          </div>
+          <div class="editor-actions">
+            <button @click="editorPlay()" x-text="editorPlaying ? '⏸ Stop' : '▶ Play'"></button>
+            <button @click="closeEditor()" class="danger">Cancel</button>
+            <button @click="editorSave()" style="background: var(--accent);">
+              💾 Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module">
       /**
        * 🎹 PIANO APP LOGIC - Alpine.js Version
        */
+
+      import { SongEditor, eventsToNotes, notesToEvents } from "./src/songEditor.js";
 
       // Constants
       const REAL_KEYS_MAP = "q2w3er5t6y7ui9o0pzsxdcfvbhnjm,l.;/'";
@@ -910,6 +1093,16 @@
           uploadPreview: null,
           previewPlaying: false,
           previewPlaybackInfo: null,
+          // Editor state
+          showEditor: false,
+          editorInstance: null,
+          editorName: "",
+          editorNotes: [],
+          editorClipboard: [],
+          editorPlaying: false,
+          editorPlaybackInfo: null,
+          editorKeyHandler: null,
+          editorResizeObserver: null,
 
           init() {
             this.initPiano();
@@ -1877,6 +2070,243 @@
 
             const midiNote = (octave + 1) * 12 + noteValue;
             return midiNote;
+          },
+
+          // Editor methods
+          openEditor(recordingIndex) {
+            this.showEditor = true;
+            this.editorPlaying = false;
+
+            if (recordingIndex === null) {
+              // Create new
+              this.editorName = `Recording ${new Date().toLocaleTimeString()}`;
+              this.editorNotes = [];
+            } else {
+              // Edit existing
+              const recording = this.recordings[recordingIndex];
+              if (!recording) return;
+
+              this.editorName = recording.name;
+              this.editorNotes = eventsToNotes(recording.data);
+            }
+
+            this.$nextTick(() => {
+              const canvas = this.$refs.editorCanvas;
+              if (!canvas) return;
+
+              this.editorInstance = new SongEditor(canvas, this.pianoKeys, {
+                keyHeight: 20,
+                pixelsPerSecond: 100,
+                keyLabelWidth: 80,
+                timelineHeight: 40,
+              });
+
+              this.editorInstance.setNotes(this.editorNotes);
+
+              // Sync notes when editor modifies them
+              const originalDraw = this.editorInstance.draw.bind(
+                this.editorInstance
+              );
+              this.editorInstance.draw = () => {
+                originalDraw();
+                // Update reactive notes array
+                this.editorNotes = [...this.editorInstance.notes];
+              };
+
+              // Handle canvas resize
+              const resizeObserver = new ResizeObserver(() => {
+                if (this.editorInstance) {
+                  this.editorInstance.resize();
+                }
+              });
+              resizeObserver.observe(canvas);
+              this.editorResizeObserver = resizeObserver;
+
+              // Keyboard shortcuts
+              const handleKeyDown = (e) => {
+                if (!this.showEditor) return;
+
+                if ((e.ctrlKey || e.metaKey) && e.key === "c") {
+                  e.preventDefault();
+                  this.editorCopy();
+                } else if ((e.ctrlKey || e.metaKey) && e.key === "v") {
+                  e.preventDefault();
+                  this.editorPaste();
+                } else if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+                  e.preventDefault();
+                  this.editorSelectAll();
+                } else if (e.key === "Delete" || e.key === "Backspace") {
+                  e.preventDefault();
+                  this.editorDelete();
+                }
+              };
+
+              window.addEventListener("keydown", handleKeyDown);
+              this.editorKeyHandler = handleKeyDown;
+            });
+          },
+
+          closeEditor() {
+            if (this.editorKeyHandler) {
+              window.removeEventListener("keydown", this.editorKeyHandler);
+              this.editorKeyHandler = null;
+            }
+
+            if (this.editorResizeObserver) {
+              this.editorResizeObserver.disconnect();
+              this.editorResizeObserver = null;
+            }
+
+            if (this.editorPlaybackInfo) {
+              this.stopEditorPlayback();
+            }
+
+            this.showEditor = false;
+            this.editorInstance = null;
+            this.editorNotes = [];
+            this.editorClipboard = [];
+          },
+
+          get editorSelectedCount() {
+            if (!this.editorInstance) return 0;
+            return this.editorInstance.selectedNotes.size;
+          },
+
+          editorCopy() {
+            if (!this.editorInstance) return;
+            this.editorInstance.copySelected();
+            this.editorClipboard = this.editorInstance.clipboard;
+          },
+
+          editorPaste() {
+            if (!this.editorInstance) return;
+            this.editorInstance.paste();
+            this.editorNotes = [...this.editorInstance.notes];
+          },
+
+          editorDelete() {
+            if (!this.editorInstance) return;
+            this.editorInstance.deleteSelected();
+            this.editorNotes = [...this.editorInstance.notes];
+          },
+
+          editorSelectAll() {
+            if (!this.editorInstance) return;
+            this.editorInstance.selectedNotes.clear();
+            this.editorInstance.notes.forEach((note) => {
+              this.editorInstance.selectedNotes.add(note);
+            });
+            this.editorInstance.draw();
+          },
+
+          editorDeselectAll() {
+            if (!this.editorInstance) return;
+            this.editorInstance.selectedNotes.clear();
+            this.editorInstance.draw();
+          },
+
+          editorSave() {
+            if (!this.editorName.trim()) {
+              alert("Please enter a song name");
+              return;
+            }
+
+            const events = notesToEvents(this.editorNotes);
+
+            const saved = JSON.parse(
+              localStorage.getItem("pianoRecordings") || "[]"
+            );
+
+            // If editing, find and update the recording
+            const existingIndex = this.recordings.findIndex(
+              (r) => r.name === this.editorName
+            );
+
+            if (existingIndex >= 0) {
+              saved[existingIndex] = { name: this.editorName, data: events };
+            } else {
+              saved.push({ name: this.editorName, data: events });
+            }
+
+            localStorage.setItem("pianoRecordings", JSON.stringify(saved));
+            this.loadRecordings();
+            this.closeEditor();
+          },
+
+          editorPlay() {
+            if (this.editorPlaying) {
+              this.stopEditorPlayback();
+              return;
+            }
+
+            if (this.editorNotes.length === 0) return;
+
+            this.editorPlaying = true;
+
+            const sortedNotes = [...this.editorNotes].sort(
+              (a, b) => a.startTime - b.startTime
+            );
+            const lastNote = sortedNotes[sortedNotes.length - 1];
+            const duration = lastNote ? lastNote.endTime + 0.5 : 0;
+
+            const playbackInfo = {
+              nodes: [],
+              startTime: performance.now(),
+              duration: duration,
+            };
+
+            this.editorPlaybackInfo = playbackInfo;
+
+            // Play all notes
+            sortedNotes.forEach((note) => {
+              const startDelay = note.startTime * 1000;
+              const endDelay = note.endTime * 1000;
+
+              const startTimer = setTimeout(() => {
+                const noteName =
+                  NOTES[note.midi % 12] + Math.floor(note.midi / 12 - 1);
+                MIDI.triggerAttack(noteName, undefined, this.playbackVol);
+              }, startDelay);
+
+              const endTimer = setTimeout(() => {
+                if (!note.sustain) {
+                  const noteName =
+                    NOTES[note.midi % 12] + Math.floor(note.midi / 12 - 1);
+                  MIDI.triggerRelease(noteName);
+                }
+              }, endDelay);
+
+              playbackInfo.nodes.push(startTimer, endTimer);
+            });
+
+            const cleanupTimer = setTimeout(() => {
+              this.stopEditorPlayback();
+            }, duration * 1000 + 100);
+
+            playbackInfo.nodes.push(cleanupTimer);
+          },
+
+          stopEditorPlayback() {
+            if (!this.editorPlaybackInfo) return;
+
+            this.editorPlaybackInfo.nodes.forEach((n) => {
+              if (typeof n === "number") {
+                clearTimeout(n);
+              }
+            });
+
+            // Stop all notes
+            for (let midi = 21; midi <= 108; midi++) {
+              const noteName = NOTES[midi % 12] + Math.floor(midi / 12 - 1);
+              try {
+                MIDI.triggerRelease(noteName);
+              } catch (e) {
+                // Ignore errors
+              }
+            }
+
+            this.editorPlaybackInfo = null;
+            this.editorPlaying = false;
           },
         };
       }

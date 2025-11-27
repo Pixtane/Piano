@@ -282,6 +282,88 @@ input[type="range"] {
   background: #444;
 }
 
+/* Song Editor */
+.editor-modal {
+  max-width: 95%;
+  width: 95%;
+  max-height: 95vh;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-modal .modal-header {
+  margin: 0;
+  padding: 20px 25px;
+  border-bottom: 1px solid #444;
+}
+
+.editor-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 25px;
+  background: #252525;
+  border-bottom: 1px solid #444;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.editor-toolbar-left,
+.editor-toolbar-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.editor-toolbar-right button {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+}
+
+.editor-toolbar-right button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.editor-container {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  background: #1a1a1a;
+  min-height: 500px;
+  height: 60vh;
+}
+
+.editor-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: default;
+}
+
+.editor-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 25px;
+  background: #252525;
+  border-top: 1px solid #444;
+  gap: 15px;
+}
+
+.editor-info {
+  display: flex;
+  gap: 15px;
+  color: #aaa;
+  font-size: 0.9rem;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 10px;
+}
+
 .song-list {
   display: flex;
   flex-direction: column;

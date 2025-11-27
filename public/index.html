@@ -146,7 +146,19 @@
           margin-bottom: 5px;
         "
       >
-        <strong>Saved Recordings</strong>
+        <div style="display: flex; align-items: center; gap: 10px">
+          <strong>Saved Recordings</strong>
+          <button
+            @click="openEditor(null)"
+            style="
+              background: var(--accent);
+              padding: 4px 12px;
+              font-size: 0.85rem;
+            "
+          >
+            + Create
+          </button>
+        </div>
         <label
           >Playback Vol:
           <input
@@ -171,6 +183,9 @@
                 x-text="playingRecordings.has(index) ? '⏸ Playing' : '▶ Play'"
                 @click="playRecording(index)"
               ></button>
+              <button @click="openEditor(index)" style="background: #4488ff">
+                Edit
+              </button>
               <button class="danger" @click="deleteRecording(index)">X</button>
             </div>
           </div>
@@ -407,6 +422,98 @@
             style="text-align: center; color: #aaa; padding: 20px"
           >
             Loading songs...
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Song Editor Modal -->
+    <div
+      x-show="showEditor"
+      class="modal-overlay"
+      @click.self="closeEditor()"
+      x-transition
+    >
+      <div class="modal-content editor-modal" @click.stop>
+        <div class="modal-header">
+          <h2>🎼 Song Editor</h2>
+          <button class="modal-close" @click="closeEditor()">×</button>
+        </div>
+        <div class="editor-toolbar">
+          <div class="editor-toolbar-left">
+            <input
+              type="text"
+              x-model="editorName"
+              placeholder="Song name..."
+              style="
+                padding: 6px 12px;
+                background: #333;
+                color: white;
+                border: 1px solid #555;
+                border-radius: 4px;
+                font-size: 0.9rem;
+                min-width: 200px;
+              "
+            />
+          </div>
+          <div class="editor-toolbar-right">
+            <button
+              @click="editorCopy()"
+              :disabled="editorSelectedCount === 0"
+              title="Copy (Ctrl+C)"
+            >
+              📋 Copy
+            </button>
+            <button
+              @click="editorPaste()"
+              :disabled="editorClipboard.length === 0"
+              title="Paste (Ctrl+V)"
+            >
+              📄 Paste
+            </button>
+            <button
+              @click="editorDelete()"
+              :disabled="editorSelectedCount === 0"
+              class="danger"
+              title="Delete (Delete)"
+            >
+              🗑 Delete
+            </button>
+            <button @click="editorSelectAll()" title="Select All (Ctrl+A)">
+              ☑ Select All
+            </button>
+            <button
+              @click="editorDeselectAll()"
+              :disabled="editorSelectedCount === 0"
+            >
+              ☐ Deselect
+            </button>
+          </div>
+        </div>
+        <div class="editor-container">
+          <canvas
+            x-ref="editorCanvas"
+            class="editor-canvas"
+            @contextmenu.prevent
+          ></canvas>
+        </div>
+        <div class="editor-footer">
+          <div class="editor-info">
+            <span x-text="`${editorNotes.length} notes`"></span>
+            <span
+              x-show="editorSelectedCount > 0"
+              x-text="`${editorSelectedCount} selected`"
+            ></span>
+          </div>
+          <div class="editor-actions">
+            <button
+              @click="editorPlay()"
+              x-text="editorPlaying ? '⏸ Stop' : '▶ Play'"
+            ></button>
+            <button @click="closeEditor()" class="danger">Cancel</button>
+            <button @click="editorSave()" style="background: var(--accent)">
+              💾 Save
+            </button>
           </div>
         </div>
       </div>

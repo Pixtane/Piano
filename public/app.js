@@ -21,6 +21,8 @@ import {
 } from "/src/marketplace.js";
 import { createMetronome } from "/src/metronome.js";
 import { playRecording, stopPlayback } from "/src/playback.js";
+import { SongEditor, eventsToNotes, notesToEvents } from "/src/songEditor.js";
+import { NOTES } from "/src/constants.js";
 
 // Initialize audio on load
 initAudio();
@@ -58,6 +60,17 @@ function pianoApp() {
     uploadPreview: null, // Will be set when file is uploaded
     previewPlaying: false,
     previewPlaybackInfo: null,
+    // Editor state
+    showEditor: false,
+    editorInstance: null,
+    editorName: "",
+    editorNotes: [],
+    editorClipboard: [],
+    editorPlaying: false,
+    editorPlaybackInfo: null,
+    editorKeyHandler: null,
+    editorResizeObserver: null,
+    editorPlayheadInterval: null,
 
     init() {
       this.initPiano();
@@ -496,6 +509,253 @@ function pianoApp() {
         this.uploadStatus = "Error saving song: " + error.message;
         this.uploadStatusType = "error";
       }
+    },
+
+    // Editor methods
+    openEditor(recordingIndex) {
+      this.showEditor = true;
+      this.editorPlaying = false;
+
+      if (recordingIndex === null) {
+        // Create new
+        this.editorName = `Recording ${new Date().toLocaleTimeString()}`;
+        this.editorNotes = [];
+      } else {
+        // Edit existing
+        const recording = this.recordings[recordingIndex];
+        if (!recording) return;
+
+        this.editorName = recording.name;
+        this.editorNotes = eventsToNotes(recording.data);
+      }
+
+      // Use setTimeout to ensure DOM is ready
+      setTimeout(() => {
+        let canvas;
+        if (this.$refs && this.$refs.editorCanvas) {
+          canvas = this.$refs.editorCanvas;
+        } else {
+          canvas = document.querySelector('[x-ref="editorCanvas"]');
+        }
+        if (!canvas) {
+          console.error("Editor canvas not found");
+          return;
+        }
+
+        this.editorInstance = new SongEditor(canvas, this.pianoKeys, {
+          keyHeight: 20,
+          pixelsPerSecond: 100,
+          keyLabelWidth: 80,
+          timelineHeight: 40,
+        });
+
+        this.editorInstance.setNotes(this.editorNotes);
+
+        // Sync notes when editor modifies them
+        const originalDraw = this.editorInstance.draw.bind(this.editorInstance);
+        this.editorInstance.draw = () => {
+          originalDraw();
+          // Update reactive notes array
+          this.editorNotes = [...this.editorInstance.notes];
+        };
+
+        // Handle canvas resize
+        const resizeObserver = new ResizeObserver(() => {
+          if (this.editorInstance) {
+            this.editorInstance.resize();
+          }
+        });
+        resizeObserver.observe(canvas);
+        this.editorResizeObserver = resizeObserver;
+
+        // Keyboard shortcuts
+        const handleKeyDown = (e) => {
+          if (!this.showEditor) return;
+
+          if ((e.ctrlKey || e.metaKey) && e.key === "c") {
+            e.preventDefault();
+            this.editorCopy();
+          } else if ((e.ctrlKey || e.metaKey) && e.key === "v") {
+            e.preventDefault();
+            this.editorPaste();
+          } else if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+            e.preventDefault();
+            this.editorSelectAll();
+          } else if (e.key === "Delete" || e.key === "Backspace") {
+            e.preventDefault();
+            this.editorDelete();
+          }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        this.editorKeyHandler = handleKeyDown;
+      }, 100);
+    },
+
+    closeEditor() {
+      if (this.editorKeyHandler) {
+        window.removeEventListener("keydown", this.editorKeyHandler);
+        this.editorKeyHandler = null;
+      }
+
+      if (this.editorResizeObserver) {
+        this.editorResizeObserver.disconnect();
+        this.editorResizeObserver = null;
+      }
+
+      if (this.editorPlaybackInfo) {
+        this.stopEditorPlayback();
+      }
+
+      if (this.editorPlayheadInterval) {
+        clearInterval(this.editorPlayheadInterval);
+        this.editorPlayheadInterval = null;
+      }
+
+      this.showEditor = false;
+      this.editorInstance = null;
+      this.editorNotes = [];
+      this.editorClipboard = [];
+    },
+
+    get editorSelectedCount() {
+      if (!this.editorInstance) return 0;
+      return this.editorInstance.selectedNotes.size;
+    },
+
+    editorCopy() {
+      if (!this.editorInstance) return;
+      this.editorInstance.copySelected();
+      this.editorClipboard = this.editorInstance.clipboard;
+    },
+
+    editorPaste() {
+      if (!this.editorInstance) return;
+      this.editorInstance.paste();
+      this.editorNotes = [...this.editorInstance.notes];
+    },
+
+    editorDelete() {
+      if (!this.editorInstance) return;
+      this.editorInstance.deleteSelected();
+      this.editorNotes = [...this.editorInstance.notes];
+    },
+
+    editorSelectAll() {
+      if (!this.editorInstance) return;
+      this.editorInstance.selectedNotes.clear();
+      this.editorInstance.notes.forEach((note) => {
+        this.editorInstance.selectedNotes.add(note);
+      });
+      this.editorInstance.draw();
+    },
+
+    editorDeselectAll() {
+      if (!this.editorInstance) return;
+      this.editorInstance.selectedNotes.clear();
+      this.editorInstance.draw();
+    },
+
+    editorSave() {
+      if (!this.editorName.trim()) {
+        alert("Please enter a song name");
+        return;
+      }
+
+      const events = notesToEvents(this.editorNotes);
+
+      const saved = loadRecordings();
+
+      // If editing, find and update the recording
+      const existingIndex = saved.findIndex((r) => r.name === this.editorName);
+
+      if (existingIndex >= 0) {
+        saved[existingIndex] = { name: this.editorName, data: events };
+      } else {
+        saved.push({ name: this.editorName, data: events });
+      }
+
+      localStorage.setItem("pianoRecordings", JSON.stringify(saved));
+      this.loadRecordings();
+      this.closeEditor();
+    },
+
+    editorPlay() {
+      if (this.editorPlaying) {
+        this.stopEditorPlayback();
+        return;
+      }
+
+      if (this.editorNotes.length === 0) return;
+
+      this.editorPlaying = true;
+
+      // Get playhead position
+      const startTime = this.editorInstance
+        ? this.editorInstance.playheadTime
+        : 0;
+
+      // Convert notes to events and filter to start from playhead
+      const events = notesToEvents(this.editorNotes);
+      const filteredEvents = events.filter((event) => event.time >= startTime);
+
+      // Adjust event times relative to playhead
+      const adjustedEvents = filteredEvents.map((event) => ({
+        ...event,
+        time: event.time - startTime,
+      }));
+
+      // Calculate duration from playhead to end
+      const sortedNotes = [...this.editorNotes].sort(
+        (a, b) => a.startTime - b.startTime
+      );
+      const lastNote = sortedNotes[sortedNotes.length - 1];
+      const totalDuration = lastNote ? lastNote.endTime + 0.5 : 0;
+      const duration = totalDuration - startTime;
+
+      // Play using the playback module
+      const playbackInfo = playRecording(
+        { name: this.editorName, data: adjustedEvents },
+        this.playbackVol
+      );
+
+      this.editorPlaybackInfo = playbackInfo;
+      this.editorPlaybackInfo.startTime = performance.now();
+      this.editorPlaybackInfo.originalStartTime = startTime;
+      this.editorPlaybackInfo.totalDuration = totalDuration;
+
+      // Update playhead during playback
+      this.editorPlayheadInterval = setInterval(() => {
+        if (!this.editorPlaying || !this.editorInstance) return;
+
+        const elapsed = (performance.now() - playbackInfo.startTime) / 1000;
+        const currentTime = startTime + elapsed;
+
+        if (currentTime >= totalDuration) {
+          // Playback finished
+          this.stopEditorPlayback();
+          if (this.editorInstance) {
+            this.editorInstance.resetPlayhead();
+          }
+        } else {
+          // Update playhead position
+          this.editorInstance.setPlayheadTime(currentTime);
+        }
+      }, 16); // ~60fps updates
+    },
+
+    stopEditorPlayback() {
+      if (this.editorPlayheadInterval) {
+        clearInterval(this.editorPlayheadInterval);
+        this.editorPlayheadInterval = null;
+      }
+
+      if (this.editorPlaybackInfo) {
+        stopPlayback(this.editorPlaybackInfo);
+        this.editorPlaybackInfo = null;
+      }
+
+      this.editorPlaying = false;
     },
   };
 }
