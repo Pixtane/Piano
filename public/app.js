@@ -35,6 +35,7 @@ initAudio();
 function pianoApp() {
   return {
     // State
+    appMode: "default", // 'default', 'editor', 'present'
     sustain: false,
     sustainMode: "toggle",
     sustainBeforeHold: false,
@@ -84,6 +85,52 @@ function pianoApp() {
     editorPlayheadInterval: null,
     editorSpeedCoefficient: 1.0,
     editorInitTimeout: null,
+    // Editor mode state
+    editorModeInstance: null,
+    editorModeResizeObserver: null,
+    editorModeKeyHandler: null,
+    editorModePlayheadInterval: null,
+    // Present mode state
+    controlsHidden: false,
+    presentMouseTimer: null,
+    presentSongIndex: -1,
+    presentSpeed: 1.0,
+    presentEffect: "particles",
+    presentRecording: false,
+    presentCanvas: null,
+    presentCtx: null,
+    presentFallingNotes: [],
+    
+    // Helper functions for color manipulation
+    darkenColor(color, amount) {
+      // Simple darken for HSL colors
+      if (color.startsWith("hsl")) {
+        const match = color.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+        if (match) {
+          const lightness = Math.max(0, parseInt(match[3]) - amount * 100);
+          return `hsl(${match[1]}, ${match[2]}%, ${lightness}%)`;
+        }
+      }
+      return color;
+    },
+    
+    lightenColor(color, amount) {
+      // Simple lighten for HSL colors
+      if (color.startsWith("hsl")) {
+        const match = color.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+        if (match) {
+          const lightness = Math.min(100, parseInt(match[3]) + amount * 100);
+          return `hsl(${match[1]}, ${match[2]}%, ${lightness}%)`;
+        }
+      }
+      return color;
+    },
+    presentAnimationFrame: null,
+    presentPlaybackInfo: null,
+    presentMediaRecorder: null,
+    presentRecordedChunks: [],
+    presentStream: null,
+    presentResizeHandler: null,
 
     init() {
       this.initPiano();
@@ -283,6 +330,10 @@ function pianoApp() {
           lucide.createIcons();
         }
       });
+    },
+
+    formatTime(seconds) {
+      return formatTime(seconds);
     },
 
     getPlaybackTime(index) {
@@ -1172,6 +1223,842 @@ function pianoApp() {
       }
 
       this.editorPlaying = false;
+    },
+
+    // App Mode Management
+    handleAppModeChange() {
+      if (this.appMode === "editor") {
+        this.initEditorMode();
+      } else if (this.appMode === "present") {
+        this.initPresentMode();
+        this.startPresentMouseTimer();
+        // Update keyboard layout after a short delay to ensure DOM is ready
+        setTimeout(() => this.updatePresentKeyboardLayout(), 100);
+      } else {
+        this.cleanupEditorMode();
+        this.cleanupPresentMode();
+      }
+    },
+
+    // Editor Mode
+    initEditorMode() {
+      this.$nextTick(() => {
+        let canvas;
+        if (this.$refs && this.$refs.editorModeCanvas) {
+          canvas = this.$refs.editorModeCanvas;
+        } else {
+          canvas = document.querySelector('[x-ref="editorModeCanvas"]');
+        }
+        if (!canvas) {
+          console.error("Editor mode canvas not found");
+          return;
+        }
+
+        this.editorModeInstance = new SongEditor(canvas, this.pianoKeys, {
+          keyHeight: 20,
+          pixelsPerSecond: 100,
+          keyLabelWidth: 80,
+          timelineHeight: 40,
+        });
+
+        // Handle canvas resize
+        const resizeObserver = new ResizeObserver(() => {
+          if (this.editorModeInstance) {
+            this.editorModeInstance.resize();
+          }
+        });
+        resizeObserver.observe(canvas);
+        this.editorModeResizeObserver = resizeObserver;
+
+        // Keyboard shortcuts
+        const handleKeyDown = (e) => {
+          if (this.appMode !== "editor") return;
+
+          if ((e.ctrlKey || e.metaKey) && e.key === "c") {
+            e.preventDefault();
+            if (this.editorModeInstance) {
+              this.editorModeInstance.copySelected();
+            }
+          } else if ((e.ctrlKey || e.metaKey) && e.key === "v") {
+            e.preventDefault();
+            if (this.editorModeInstance) {
+              this.editorModeInstance.paste();
+            }
+          } else if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+            e.preventDefault();
+            if (this.editorModeInstance) {
+              this.editorModeInstance.selectedNotes.clear();
+              this.editorModeInstance.notes.forEach((note) => {
+                this.editorModeInstance.selectedNotes.add(note);
+              });
+              this.editorModeInstance.draw();
+            }
+          } else if (e.key === "Delete" || e.key === "Backspace") {
+            e.preventDefault();
+            if (this.editorModeInstance) {
+              this.editorModeInstance.deleteSelected();
+            }
+          }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        this.editorModeKeyHandler = handleKeyDown;
+      });
+    },
+
+    openEditorInMode(recordingIndex) {
+      if (!this.editorModeInstance) return;
+      
+      if (recordingIndex === null) {
+        this.editorModeInstance.setNotes([]);
+        this.editorName = `Recording ${new Date().toLocaleTimeString()}`;
+      } else {
+        const recording = this.recordings[recordingIndex];
+        if (!recording) return;
+        const notes = eventsToNotes(recording.data);
+        this.editorModeInstance.setNotes(notes);
+        this.editorName = recording.name;
+      }
+      
+      // Sync notes when editor modifies them
+      const originalDraw = this.editorModeInstance.draw.bind(this.editorModeInstance);
+      this.editorModeInstance.draw = () => {
+        originalDraw();
+        this.editorNotes = [...this.editorModeInstance.notes];
+      };
+    },
+
+    cleanupEditorMode() {
+      if (this.editorModeKeyHandler) {
+        window.removeEventListener("keydown", this.editorModeKeyHandler);
+        this.editorModeKeyHandler = null;
+      }
+      if (this.editorModeResizeObserver) {
+        this.editorModeResizeObserver.disconnect();
+        this.editorModeResizeObserver = null;
+      }
+      if (this.editorModePlayheadInterval) {
+        clearInterval(this.editorModePlayheadInterval);
+        this.editorModePlayheadInterval = null;
+      }
+      this.editorModeInstance = null;
+    },
+
+    // Present Mode
+    initPresentMode() {
+      // Use a longer delay to ensure template is rendered
+      setTimeout(() => {
+        this.$nextTick(() => {
+          let canvas;
+          if (this.$refs && this.$refs.presentCanvas) {
+            canvas = this.$refs.presentCanvas;
+          } else {
+            canvas = document.querySelector('[x-ref="presentCanvas"]');
+          }
+          if (!canvas) {
+            console.error("Present mode canvas not found, retrying...");
+            // Retry after a short delay
+            setTimeout(() => this.initPresentMode(), 200);
+            return;
+          }
+
+          this.presentCanvas = canvas;
+          this.presentCtx = canvas.getContext("2d");
+          
+          // Ensure canvas is visible
+          canvas.style.display = "block";
+          canvas.style.position = "absolute";
+          canvas.style.top = "0";
+          canvas.style.left = "0";
+          canvas.style.width = "100%";
+          canvas.style.height = "100%";
+          
+          // Initial resize
+          this.resizePresentCanvas();
+          
+          // Remove existing resize listener if any
+          if (this.presentResizeHandler) {
+            window.removeEventListener("resize", this.presentResizeHandler);
+          }
+          this.presentResizeHandler = () => this.resizePresentCanvas();
+          window.addEventListener("resize", this.presentResizeHandler);
+          
+          // Start animation loop
+          this.startPresentAnimation();
+          
+          // Update keyboard layout after a short delay to ensure keys are rendered
+          setTimeout(() => {
+            this.updatePresentKeyboardLayout();
+          }, 100);
+        });
+      }, 200);
+    },
+
+    updatePresentKeyboardLayout() {
+      this.$nextTick(() => {
+        const container = document.querySelector(".present-piano-keys");
+        if (!container) {
+          setTimeout(() => this.updatePresentKeyboardLayout(), 100);
+          return;
+        }
+
+        const whiteKeys = container.querySelectorAll(".present-key.white");
+        
+        if (whiteKeys.length === 0) {
+          // Retry if keys aren't rendered yet
+          setTimeout(() => this.updatePresentKeyboardLayout(), 100);
+          return;
+        }
+
+        const containerWidth = container.offsetWidth;
+        const whiteKeyWidth = containerWidth / whiteKeys.length;
+
+        // Position black keys correctly based on piano layout
+        // Use the same logic as the default piano layout
+        let whiteKeyIndex = 0;
+        this.pianoKeys.forEach((key) => {
+          if (key.isBlack) {
+            const blackKey = document.getElementById(`present-key-${key.midi}`);
+            if (blackKey) {
+              // Use the original leftPos calculation but scale it to full width
+              // The original leftPos is calculated as: whiteKeyOffset * 52 - 17
+              // We need to scale this to the current white key width
+              const originalLeftPos = key.leftPos; // This is relative to white key positions
+              
+              // Calculate which white key this black key should be positioned relative to
+              // Find the white key index that this black key follows
+              let targetWhiteIndex = whiteKeyIndex;
+              
+              // The black key should be positioned between white keys
+              // Position it slightly to the right of the left white key
+              const leftPos = targetWhiteIndex * whiteKeyWidth - (whiteKeyWidth * 0.3);
+              blackKey.style.left = `${leftPos}px`;
+              blackKey.style.width = `${whiteKeyWidth * 0.6}px`;
+            }
+          } else {
+            // Increment white key index for positioning black keys
+            whiteKeyIndex++;
+          }
+        });
+      });
+    },
+
+    resizePresentCanvas() {
+      if (!this.presentCanvas) return;
+      const container = this.presentCanvas.parentElement;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) {
+        // Container not yet sized, retry
+        setTimeout(() => this.resizePresentCanvas(), 100);
+        return;
+      }
+      const dpr = window.devicePixelRatio || 1;
+      const currentWidth = this.presentCanvas.width / dpr;
+      const currentHeight = this.presentCanvas.height / dpr;
+      
+      // Only resize if dimensions changed
+      if (Math.abs(currentWidth - rect.width) > 1 || Math.abs(currentHeight - rect.height) > 1) {
+        this.presentCanvas.width = rect.width * dpr;
+        this.presentCanvas.height = rect.height * dpr;
+        if (this.presentCtx) {
+          this.presentCtx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
+          this.presentCtx.scale(dpr, dpr);
+        }
+      }
+      this.updatePresentKeyboardLayout();
+    },
+
+    startPresentAnimation() {
+      if (this.presentAnimationFrame) {
+        cancelAnimationFrame(this.presentAnimationFrame);
+      }
+
+      let lastTime = performance.now();
+
+      const animate = (time) => {
+        if (this.appMode !== "present") return;
+        
+        const deltaTime = (time - lastTime) / 1000; // Convert to seconds
+        lastTime = time;
+        
+        this.drawPresentMode(deltaTime);
+        this.presentAnimationFrame = requestAnimationFrame(animate);
+      };
+      this.presentAnimationFrame = requestAnimationFrame(animate);
+    },
+
+    drawPresentMode(deltaTime = 0.016) {
+      if (!this.presentCtx || !this.presentCanvas) {
+        // Canvas not ready, retry initialization
+        if (this.appMode === "present") {
+          setTimeout(() => this.initPresentMode(), 100);
+        }
+        return;
+      }
+      
+      // Make sure canvas is properly sized
+      if (this.presentCanvas.width === 0 || this.presentCanvas.height === 0) {
+        this.resizePresentCanvas();
+        // Return early if still not sized
+        if (this.presentCanvas.width === 0 || this.presentCanvas.height === 0) {
+          return;
+        }
+      }
+
+      const dpr = window.devicePixelRatio || 1;
+      const width = this.presentCanvas.width / dpr;
+      const height = this.presentCanvas.height / dpr;
+
+      // Always start with black background
+      this.presentCtx.fillStyle = "#000";
+      this.presentCtx.fillRect(0, 0, width, height);
+
+      // Then add fade effect for trails/particles
+      if (this.presentEffect === "trails" || this.presentEffect === "particles") {
+        this.presentCtx.fillStyle = "rgba(0, 0, 0, 0.1)";
+        this.presentCtx.fillRect(0, 0, width, height);
+      }
+
+      // Draw falling note blocks
+      const keyboardContainerHeight = 190;
+      const keyboardPaddingTop = 20;
+      const keyboardY = height - (keyboardContainerHeight - keyboardPaddingTop);
+      
+      this.presentFallingNotes = this.presentFallingNotes.filter((note) => {
+        // Use deltaTime for frame-rate independent movement
+        // If velocity is in px/sec, this moves it correct amount
+        note.y += note.velocity * deltaTime;
+        
+        // Only trigger particles if "played" flag is set by the audio scheduler
+        if (note.played && !note.hasTriggeredParticles) {
+             note.hasTriggeredParticles = true;
+             // Create impact effect particles one time when played flag is set
+             for (let i = 0; i < 20; i++) {
+                note.effectParticles.push({
+                  x: note.x + (Math.random() - 0.5) * note.width,
+                  y: keyboardY,
+                  vx: (Math.random() - 0.5) * 4,
+                  vy: -Math.random() * 3 - 1,
+                  life: 1,
+                  size: 2 + Math.random() * 3,
+                });
+              }
+        }
+        
+        // Remove note after it falls off screen
+        if (note.y > height + 200) { 
+           return false;
+        }
+        
+        // Draw note block (rectangle like piano roll)
+        this.presentCtx.save();
+        this.presentCtx.globalAlpha = note.alpha;
+
+        // Draw the note block
+        const blockX = note.x - note.width / 2;
+        const blockY = note.y;
+        
+        // Main note block with gradient
+        const gradient = this.presentCtx.createLinearGradient(
+          blockX, blockY,
+          blockX, blockY + note.height
+        );
+        gradient.addColorStop(0, note.color);
+        gradient.addColorStop(1, this.darkenColor(note.color, 0.3));
+        
+        this.presentCtx.fillStyle = gradient;
+        this.presentCtx.fillRect(blockX, blockY, note.width, note.height);
+        
+        // Add border/outline with glow
+        this.presentCtx.strokeStyle = this.lightenColor(note.color, 0.2);
+        this.presentCtx.lineWidth = 2;
+        this.presentCtx.strokeRect(blockX, blockY, note.width, note.height);
+        
+        // Add inner highlight
+        this.presentCtx.fillStyle = "rgba(255, 255, 255, 0.2)";
+        this.presentCtx.fillRect(blockX + 2, blockY + 2, note.width - 4, note.height / 3);
+        
+        // Add effects based on type
+        if (this.presentEffect === "particles") {
+          // Sparkle particles around the block
+          for (let i = 0; i < 5; i++) {
+            const angle = (Date.now() / 50 + i * 72) * Math.PI / 180;
+            const radius = 15 + Math.sin(Date.now() / 100 + i) * 5;
+            const px = note.x + Math.cos(angle) * radius;
+            const py = note.y + note.height / 2 + Math.sin(angle) * radius;
+            
+            this.presentCtx.fillStyle = note.color;
+            this.presentCtx.globalAlpha = 0.6;
+            this.presentCtx.beginPath();
+            this.presentCtx.arc(px, py, 2, 0, Math.PI * 2);
+            this.presentCtx.fill();
+          }
+        } else if (this.presentEffect === "trails") {
+          // Glowing trail behind the block
+          const trailLength = 30;
+          const trailGradient = this.presentCtx.createLinearGradient(
+            blockX, blockY - trailLength,
+            blockX, blockY
+          );
+          trailGradient.addColorStop(0, "transparent");
+          trailGradient.addColorStop(1, note.color);
+          this.presentCtx.fillStyle = trailGradient;
+          this.presentCtx.fillRect(blockX, blockY - trailLength, note.width, trailLength);
+        } else if (this.presentEffect === "waves") {
+          // Ripple effect from the block
+          const rippleSize = Math.sin(Date.now() / 200 + note.y / 10) * 10 + 20;
+          this.presentCtx.strokeStyle = note.color;
+          this.presentCtx.globalAlpha = 0.4;
+          this.presentCtx.lineWidth = 2;
+          this.presentCtx.beginPath();
+          this.presentCtx.arc(note.x, note.y + note.height / 2, rippleSize, 0, Math.PI * 2);
+          this.presentCtx.stroke();
+        }
+        
+        // Draw impact particles
+        note.effectParticles = note.effectParticles.filter((particle) => {
+          particle.x += particle.vx;
+          particle.y += particle.vy;
+          particle.life -= 0.02;
+          particle.vy += 0.1; // gravity
+          
+          if (particle.life <= 0) return false;
+          
+          this.presentCtx.fillStyle = note.color;
+          this.presentCtx.globalAlpha = particle.life;
+          this.presentCtx.beginPath();
+          this.presentCtx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+          this.presentCtx.fill();
+          
+          return true;
+        });
+
+        this.presentCtx.restore();
+        return true;
+      });
+    },
+
+    handlePresentMouseMove() {
+      if (this.appMode !== "present") return;
+      this.controlsHidden = false;
+      this.startPresentMouseTimer();
+    },
+
+    startPresentMouseTimer() {
+      if (this.presentMouseTimer) {
+        clearTimeout(this.presentMouseTimer);
+      }
+      this.presentMouseTimer = setTimeout(() => {
+        if (this.appMode === "present") {
+          this.controlsHidden = true;
+        }
+      }, 3000);
+    },
+
+    handlePresentSongChange() {
+      // Handle both number and string "-1"
+      if (this.presentSongIndex === -1 || this.presentSongIndex === "-1") {
+        this.stopPresentPlayback();
+        return;
+      }
+
+      const track = this.recordings[this.presentSongIndex];
+      if (!track) return;
+
+      this.stopPresentPlayback();
+      this.startPresentPlayback();
+    },
+
+    startPresentPlayback() {
+      if (this.presentSongIndex === -1) return;
+      
+      const track = this.recordings[this.presentSongIndex];
+      if (!track) return;
+
+      // Calculate constants for synchronization
+      // Container is 190px tall, with 20px padding top.
+      // So keys start at 20px from the top of the container.
+      const keyboardContainerHeight = 190;
+      const keyboardPaddingTop = 20;
+      const effectiveKeyboardHeight = keyboardContainerHeight - keyboardPaddingTop;
+      
+      const dpr = window.devicePixelRatio || 1;
+      // Use logical height (CSS pixels) for calculations
+      const canvasHeight = this.presentCanvas.height / dpr; 
+      
+      // Notes fall until they hit the keys
+      const distance = canvasHeight - effectiveKeyboardHeight;
+      
+      // Define a fixed fall speed (pixels per second)
+      const fallSpeed = 350; 
+      const fallTimeSeconds = distance / fallSpeed;
+      const fallTimeMs = fallTimeSeconds * 1000;
+
+      // Convert events to notes and play
+      const events = track.data.map((e) => ({
+        ...e,
+        time: e.time / this.presentSpeed,
+        // Initialize duration
+        duration: 0
+      }));
+
+      const sortedEvents = [...events].sort((a, b) => a.time - b.time);
+      
+      // Calculate durations
+      const activeNotes = new Map();
+      sortedEvents.forEach(e => {
+        if (e.type === 'on') {
+           activeNotes.set(e.midi, e);
+        } else if (e.type === 'off') {
+           const onEvent = activeNotes.get(e.midi);
+           if (onEvent) {
+             onEvent.duration = e.time - onEvent.time;
+             activeNotes.delete(e.midi);
+           }
+        }
+      });
+
+      const duration = sortedEvents.length > 0
+          ? sortedEvents[sortedEvents.length - 1].time + 0.5
+          : 0;
+
+      const playbackInfo = {
+        nodes: [],
+        startTime: performance.now() + fallTimeMs, // Audio starts after notes fall
+        duration: duration + fallTimeSeconds,
+      };
+
+      // 1. Schedule Audio and Key Animation (Delayed by fall time)
+      sortedEvents.forEach((event) => {
+        const playTimeMs = (event.time * 1000) + fallTimeMs;
+        
+        const timer = setTimeout(() => {
+          const midi = event.midi;
+          const noteName = NOTES[midi % 12] + Math.floor(midi / 12 - 1);
+          const keyEl = document.getElementById(`present-key-${midi}`);
+
+          if (event.type === "on") {
+            if (keyEl) keyEl.classList.add("active");
+            playMIDINote(midi, this.playbackVol);
+            
+            // Trigger impact effect exactly when note plays
+            this.triggerImpactEffect(midi);
+            
+          } else if (event.type === "off") {
+            if (!event.sustain) {
+              stopMIDINote(noteName);
+            }
+            if (keyEl) keyEl.classList.remove("active");
+          }
+        }, playTimeMs);
+
+        playbackInfo.nodes.push(timer);
+      });
+
+      // 2. Schedule Visual Notes (Start immediately)
+      const onEvents = sortedEvents.filter(e => e.type === "on");
+      onEvents.forEach((event) => {
+        const spawnTimeMs = event.time * 1000;
+        
+        const timer = setTimeout(() => {
+          this.createFallingNote(event.midi, fallSpeed, event.duration);
+        }, spawnTimeMs);
+        
+        playbackInfo.nodes.push(timer);
+      });
+
+      const cleanupTimer = setTimeout(() => {
+        stopPlayback(playbackInfo);
+        this.presentPlaybackInfo = null;
+      }, (duration * 1000) + fallTimeMs + 1000);
+
+      playbackInfo.nodes.push(cleanupTimer);
+      this.presentPlaybackInfo = playbackInfo;
+    },
+
+    triggerImpactEffect(midi) {
+       // Find the falling note that corresponds to this midi
+       // Since the audio is scheduled exactly when the note should hit the keyboard,
+       // we look for a note that is close to the keyboardY position.
+       
+       const keyEl = document.getElementById(`present-key-${midi}`);
+       if (!keyEl) return;
+       
+       const dpr = window.devicePixelRatio || 1;
+       const canvasHeight = this.presentCanvas.height / dpr;
+       
+       const keyboardContainerHeight = 190;
+       const keyboardPaddingTop = 20;
+       const keyboardY = canvasHeight - (keyboardContainerHeight - keyboardPaddingTop);
+       
+       // Find the visual note that is closest to the impact point
+       const matchingNote = this.presentFallingNotes.find(n => 
+         n.midi === midi && 
+         !n.played && 
+         Math.abs((n.y + n.height) - keyboardY) < 50 // Look for note near impact point
+       );
+       
+       if (matchingNote) {
+         matchingNote.played = true; // Mark as played so it generates particles in draw loop
+       }
+    },
+
+    getNoteColor(midi) {
+      const hue = ((midi - 21) * 360) / 88;
+      return `hsl(${hue}, 70%, 60%)`;
+    },
+
+    // Watch for speed changes in present mode
+    watchPresentSpeed() {
+      if (this.appMode === "present" && this.presentPlaybackInfo) {
+        // Restart playback with new speed
+        this.stopPresentPlayback();
+        this.startPresentPlayback();
+      }
+    },
+
+    saveEditorModeRecording() {
+      if (!this.editorModeInstance || !this.editorName.trim()) {
+        alert("Please enter a song name");
+        return;
+      }
+
+      const events = notesToEvents(this.editorModeInstance.notes);
+      const saved = loadRecordings();
+
+      // Find if recording exists
+      const existingIndex = saved.findIndex((r) => r.name === this.editorName);
+
+      if (existingIndex >= 0) {
+        saved[existingIndex] = { name: this.editorName, data: events };
+      } else {
+        saved.push({ name: this.editorName, data: events });
+      }
+
+      localStorage.setItem("pianoRecordings", JSON.stringify(saved));
+      this.loadRecordings();
+      alert("Recording saved!");
+    },
+
+    editorModeCopy() {
+      if (!this.editorModeInstance) return;
+      this.editorModeInstance.copySelected();
+    },
+
+    editorModePaste() {
+      if (!this.editorModeInstance) return;
+      this.editorModeInstance.paste();
+      this.editorNotes = [...this.editorModeInstance.notes];
+    },
+
+    editorModeDelete() {
+      if (!this.editorModeInstance) return;
+      this.editorModeInstance.deleteSelected();
+      this.editorNotes = [...this.editorModeInstance.notes];
+    },
+
+    createFallingNote(midi, velocity, duration) {
+      if (!this.presentCanvas || !this.presentCtx) return;
+
+      const keyEl = document.getElementById(`present-key-${midi}`);
+      
+      // Color based on note
+      const hue = ((midi - 21) * 360) / 88;
+      const color = `hsl(${hue}, 70%, 60%)`;
+
+      let x, width;
+
+      // Velocity is now in pixels per second
+      const velocityPxPerSec = velocity || 200;
+      
+      // Calculate height based on duration (min height 10px)
+      const height = Math.max(10, (duration || 0.1) * velocityPxPerSec);
+      
+      // Spawn above the viewport so the bottom hits exactly at impact time
+      const startY = -height;
+
+      if (!keyEl) {
+        // Fallback: calculate position based on MIDI note
+        const keyIndex = this.pianoKeys.findIndex((k) => k.midi === midi);
+        if (keyIndex === -1) return;
+        
+        const container = this.presentCanvas.parentElement;
+        if (!container) return;
+        
+        const containerWidth = container.offsetWidth;
+        const whiteKeyCount = this.pianoKeys.filter((k) => !k.isBlack).length;
+        const whiteKeyWidth = containerWidth / whiteKeyCount;
+        
+        // Calculate position based on key layout
+        let whiteKeyIndex = 0;
+        for (let i = 0; i < keyIndex; i++) {
+          if (!this.pianoKeys[i].isBlack) whiteKeyIndex++;
+        }
+        
+        const key = this.pianoKeys[keyIndex];
+        const isBlack = key ? key.isBlack : false;
+        x = isBlack 
+          ? whiteKeyIndex * whiteKeyWidth - (whiteKeyWidth * 0.3)
+          : (whiteKeyIndex + 0.5) * whiteKeyWidth;
+        // Use approx width
+        width = isBlack ? whiteKeyWidth * 0.6 : whiteKeyWidth * 0.95;
+      } else {
+        const rect = keyEl.getBoundingClientRect();
+        const canvasRect = this.presentCanvas.getBoundingClientRect();
+        x = rect.left + rect.width / 2 - canvasRect.left;
+        
+        // Use exact key width
+        width = rect.width;
+      }
+
+      this.presentFallingNotes.push({
+        midi: midi,
+        x: x,
+        y: startY,
+        velocity: velocityPxPerSec, 
+        color: color,
+        alpha: 1,
+        width: width,
+        height: height,
+        played: false,
+        hasTriggeredParticles: false,
+        effectParticles: [],
+      });
+    },
+
+    stopPresentPlayback() {
+      if (this.presentPlaybackInfo) {
+        stopPlayback(this.presentPlaybackInfo);
+        this.presentPlaybackInfo = null;
+      }
+
+      // Clear visual notes so they don't linger
+      this.presentFallingNotes = [];
+
+      // Stop all active notes
+      for (let midi = 21; midi <= 108; midi++) {
+        const noteName = NOTES[midi % 12] + Math.floor(midi / 12 - 1);
+        try {
+          stopMIDINote(noteName);
+        } catch (e) {
+          // Ignore errors
+        }
+        const keyEl = document.getElementById(`present-key-${midi}`);
+        if (keyEl) keyEl.classList.remove("active");
+      }
+    },
+
+    togglePresentRecording() {
+      if (this.presentRecording) {
+        this.stopPresentRecording();
+      } else {
+        this.startPresentRecording();
+      }
+    },
+
+    async startPresentRecording() {
+      try {
+        // Get canvas stream
+        const canvasStream = this.presentCanvas.captureStream(30); // 30 FPS
+
+        // Get audio context destination (we'll need to mix audio)
+        // For now, we'll record canvas only and add audio track separately
+        this.presentStream = canvasStream;
+
+        // Create MediaRecorder
+        const options = {
+          mimeType: "video/webm;codecs=vp9",
+        };
+
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+          options.mimeType = "video/webm;codecs=vp8";
+        }
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+          options.mimeType = "video/webm";
+        }
+
+        this.presentMediaRecorder = new MediaRecorder(this.presentStream, options);
+        this.presentRecordedChunks = [];
+
+        this.presentMediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            this.presentRecordedChunks.push(event.data);
+          }
+        };
+
+        this.presentMediaRecorder.onstop = () => {
+          // Recording stopped
+        };
+
+        this.presentMediaRecorder.start(100); // Collect data every 100ms
+        this.presentRecording = true;
+      } catch (error) {
+        console.error("Error starting recording:", error);
+        alert("Error starting recording: " + error.message);
+      }
+    },
+
+    stopPresentRecording() {
+      if (this.presentMediaRecorder && this.presentRecording) {
+        this.presentMediaRecorder.stop();
+        this.presentRecording = false;
+      }
+    },
+
+    async exportPresentRecording() {
+      if (!this.presentRecording || this.presentRecordedChunks.length === 0) {
+        alert("No recording available. Please record first.");
+        return;
+      }
+
+      this.stopPresentRecording();
+
+      // Wait a bit for the last chunk
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const blob = new Blob(this.presentRecordedChunks, {
+        type: "video/webm",
+      });
+
+      // Create download link
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `piano-recording-${Date.now()}.webm`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      // Note: WebM can be converted to MKV using tools like ffmpeg
+      // For now, we export as WebM which is compatible with most players
+      alert(
+        "Recording exported as WebM. To convert to MKV, use ffmpeg: ffmpeg -i input.webm output.mkv"
+      );
+
+      this.presentRecordedChunks = [];
+    },
+
+    cleanupPresentMode() {
+      if (this.presentMouseTimer) {
+        clearTimeout(this.presentMouseTimer);
+        this.presentMouseTimer = null;
+      }
+      if (this.presentAnimationFrame) {
+        cancelAnimationFrame(this.presentAnimationFrame);
+        this.presentAnimationFrame = null;
+      }
+      if (this.presentResizeHandler) {
+        window.removeEventListener("resize", this.presentResizeHandler);
+        this.presentResizeHandler = null;
+      }
+      this.stopPresentPlayback();
+      if (this.presentRecording) {
+        this.stopPresentRecording();
+      }
+      this.presentFallingNotes = [];
+      this.controlsHidden = false;
     },
   };
 }

@@ -22,12 +22,22 @@
     @keydown.window="handleKeyDown($event)"
     @keyup.window="handleKeyUp($event)"
     @click="volumePopoverOpen = null"
+    @mousemove.window="if (appMode === 'present') handlePresentMouseMove()"
   >
-    <div class="controls">
+    <div class="controls" :class="{ 'controls-hidden': appMode === 'present' && controlsHidden }">
       <div class="controls-left">
         <h1>🎹 Virtuoso</h1>
 
         <div class="control-group">
+          <label>App Mode:</label>
+          <select x-model="appMode" @change="handleAppModeChange()">
+            <option value="default">Default</option>
+            <option value="editor">Editor</option>
+            <option value="present">Present</option>
+          </select>
+        </div>
+
+        <div class="control-group" x-show="appMode === 'default'">
           <label>Mode:</label>
           <select x-model="inputMode" @change="updateKeyLabels()">
             <option value="real">Real Keys (q2w3...)</option>
@@ -36,7 +46,7 @@
           </select>
         </div>
 
-        <div class="control-group">
+        <div class="control-group" x-show="appMode === 'default'">
           <label>Start Octave:</label>
           <input
             type="number"
@@ -48,7 +58,7 @@
           />
         </div>
 
-        <div class="control-group">
+        <div class="control-group" x-show="appMode === 'default'">
           <label>Sustain:</label>
           <select x-model="sustainMode" @change="handleSustainModeChange()">
             <option value="toggle">Toggle</option>
@@ -69,7 +79,7 @@
           </button>
         </div>
 
-        <div class="control-group">
+        <div class="control-group" x-show="appMode === 'default'">
           <label>Metronome:</label>
           <input
             type="number"
@@ -92,7 +102,7 @@
           </button>
         </div>
 
-        <div class="control-group">
+        <div class="control-group" x-show="appMode === 'default'">
           <button
             x-text="isRecording ? '■ Stop & Save' : '● Record'"
             :class="{ active: isRecording }"
@@ -104,6 +114,48 @@
           <div x-show="isRecording" x-text="recordingTime" class="hidden">
             00:00
           </div>
+        </div>
+
+        <!-- Present Mode Controls -->
+        <div class="control-group present-controls" x-show="appMode === 'present'">
+          <label>Song:</label>
+          <select x-model="presentSongIndex" @change="handlePresentSongChange()">
+            <option value="-1">None</option>
+            <template x-for="(rec, index) in recordings" :key="index">
+              <option :value="index" x-text="rec.name"></option>
+            </template>
+          </select>
+          <label>Speed:</label>
+          <input
+            type="number"
+            x-model.number="presentSpeed"
+            @change="watchPresentSpeed()"
+            min="0.1"
+            max="4"
+            step="0.1"
+            style="width: 60px"
+          />
+          <label>Effect:</label>
+          <select x-model="presentEffect">
+            <option value="particles">Particles</option>
+            <option value="trails">Trails</option>
+            <option value="waves">Waves</option>
+          </select>
+          <button
+            x-text="presentRecording ? '■ Stop Recording' : '● Record'"
+            :class="{ active: presentRecording }"
+            style="color: #ff5555"
+            @click="togglePresentRecording()"
+          >
+            ● Record
+          </button>
+          <button
+            x-show="presentRecording"
+            @click="exportPresentRecording()"
+            :disabled="!presentRecording"
+          >
+            Export MKV
+          </button>
         </div>
       </div>
 
@@ -117,171 +169,287 @@
       </div>
     </div>
 
-    <div class="piano-container">
-      <div class="piano-keys" :style="{ width: pianoWidth + 'px' }">
-        <template x-for="key in pianoKeys" :key="key.midi">
+    <!-- Default Mode View -->
+    <div x-show="appMode === 'default'" style="display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden;">
+      <div class="piano-container" style="flex: 1; min-height: 0;">
+        <div class="piano-keys" :style="{ width: pianoWidth + 'px' }">
+          <template x-for="key in pianoKeys" :key="key.midi">
+            <div
+              :id="`key-${key.midi}`"
+              :class="`key ${key.isBlack ? 'black' : 'white'}`"
+              :style="key.isBlack ? { left: key.leftPos + 'px' } : {}"
+              @mousedown="triggerNoteOn(key.midi)"
+              @mouseup="triggerNoteOff(key.midi)"
+              @mouseleave="triggerNoteOff(key.midi)"
+            >
+              <span
+                class="key-note"
+                x-text="`${key.noteName}${key.octave}`"
+                :class="{ hidden: !showNotes }"
+              ></span>
+              <span class="key-bind" x-text="key.keyBind"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+      <div class="recorder-panel">
           <div
-            :id="`key-${key.midi}`"
-            :class="`key ${key.isBlack ? 'black' : 'white'}`"
-            :style="key.isBlack ? { left: key.leftPos + 'px' } : {}"
-            @mousedown="triggerNoteOn(key.midi)"
-            @mouseup="triggerNoteOff(key.midi)"
-            @mouseleave="triggerNoteOff(key.midi)"
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 5px;
+            "
           >
-            <span
-              class="key-note"
-              x-text="`${key.noteName}${key.octave}`"
-              :class="{ hidden: !showNotes }"
-            ></span>
-            <span class="key-bind" x-text="key.keyBind"></span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <strong>Saved Recordings</strong>
+              <button
+                @click="openEditor(null)"
+                style="
+                  background: var(--accent);
+                  padding: 4px 12px;
+                  font-size: 0.85rem;
+                "
+              >
+                + Create
+              </button>
+            </div>
+            <label
+              >Playback Vol:
+              <input
+                type="range"
+                x-model.number="playbackVol"
+                min="0"
+                max="1"
+                step="0.1"
+            /></label>
           </div>
-        </template>
+          <div>
+            <template x-for="(rec, index) in recordings" :key="index">
+              <div class="track-item">
+                <div class="track-item-header">
+                  <span x-text="`${rec.name} (${rec.data.length} notes)`"></span>
+                  <div class="track-item-controls">
+                    <span
+                      x-show="playingRecordings.has(index)"
+                      style="
+                        margin-right: 10px;
+                        color: var(--accent);
+                        font-size: 0.9rem;
+                      "
+                      x-text="getPlaybackTime(index)"
+                    ></span>
+                    <button
+                      class="icon-button play"
+                      @click="playRecording(index)"
+                      :title="playingRecordings.has(index) ? 'Pause' : 'Play'"
+                    >
+                      <i
+                        data-lucide="play"
+                        x-show="!playingRecordings.has(index)"
+                      ></i>
+                      <i
+                        data-lucide="pause"
+                        x-show="playingRecordings.has(index)"
+                      ></i>
+                    </button>
+                    <button
+                      class="icon-button repeat"
+                      :class="{ active: recordingRepeat.has(index) }"
+                      @click="toggleRepeat(index)"
+                      title="Toggle repeat"
+                    >
+                      <i data-lucide="repeat"></i>
+                    </button>
+                    <div style="position: relative">
+                      <button
+                        class="icon-button volume"
+                        @click.stop="toggleVolumePopover(index)"
+                        title="Volume"
+                      >
+                        <i data-lucide="volume-2"></i>
+                      </button>
+                      <div
+                        x-show="volumePopoverOpen === index"
+                        class="volume-popover"
+                        @click.stop
+                      >
+                        <div class="volume-slider-container">
+                          <label
+                            x-text="`Volume: ${Math.round((recordingVolumes.get(index) || 0.8) * 100)}%`"
+                          ></label>
+                          <input
+                            type="range"
+                            class="volume-slider"
+                            :value="recordingVolumes.get(index) || 0.8"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            @input="setRecordingVolume(index, $event.target.value)"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <button @click="openEditor(index)" style="background: #4488ff">
+                      Edit
+                    </button>
+                    <button class="danger" @click="deleteRecording(index)">
+                      X
+                    </button>
+                  </div>
+                </div>
+                <div
+                  x-show="playingRecordings.has(index) || recordingProgress.has(index) || (pausedRecordings && pausedRecordings.has(index))"
+                  class="track-timeline-container"
+                >
+                  <span
+                    style="font-size: 0.8rem; color: #aaa; min-width: 50px"
+                    x-text="formatTime(getRecordingCurrentTime(index))"
+                  ></span>
+                  <div
+                    class="track-timeline"
+                    @click="seekRecording(index, $event)"
+                    @mousedown="startTimelineDrag(index, $event)"
+                  >
+                    <div
+                      class="track-timeline-progress"
+                      :style="`width: ${getRecordingProgress(index) * 100}%`"
+                    ></div>
+                    <div
+                      class="track-timeline-handle"
+                      :style="`left: ${getRecordingProgress(index) * 100}%`"
+                      @mousedown.stop="startTimelineDrag(index, $event)"
+                    ></div>
+                  </div>
+                  <span
+                    style="
+                      font-size: 0.8rem;
+                      color: #aaa;
+                      min-width: 50px;
+                      text-align: right;
+                    "
+                    x-text="formatTime(getRecordingDuration(index))"
+                  ></span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div class="recorder-panel">
-      <div
-        style="
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 5px;
-        "
-      >
-        <div style="display: flex; align-items: center; gap: 10px">
-          <strong>Saved Recordings</strong>
-          <button
-            @click="openEditor(null)"
+    <!-- Editor Mode View -->
+    <div x-show="appMode === 'editor'" class="editor-mode-container">
+      <div class="editor-mode-toolbar">
+        <div class="editor-mode-toolbar-left">
+          <input
+            type="text"
+            x-model="editorName"
+            placeholder="Song name..."
             style="
-              background: var(--accent);
-              padding: 4px 12px;
-              font-size: 0.85rem;
+              padding: 6px 12px;
+              background: #333;
+              color: white;
+              border: 1px solid #555;
+              border-radius: 4px;
+              font-size: 0.9rem;
+              min-width: 200px;
             "
+          />
+        </div>
+        <div class="editor-mode-toolbar-right">
+          <button
+            @click="editorModeCopy()"
+            :disabled="!editorModeInstance || editorModeInstance.selectedNotes.size === 0"
+            title="Copy (Ctrl+C)"
           >
-            + Create
+            📋 Copy
+          </button>
+          <button
+            @click="editorModePaste()"
+            :disabled="!editorModeInstance || !editorModeInstance.clipboard || editorModeInstance.clipboard.length === 0"
+            title="Paste (Ctrl+V)"
+          >
+            📄 Paste
+          </button>
+          <button
+            @click="editorModeDelete()"
+            :disabled="!editorModeInstance || editorModeInstance.selectedNotes.size === 0"
+            class="danger"
+            title="Delete (Delete)"
+          >
+            🗑 Delete
+          </button>
+          <button
+            @click="saveEditorModeRecording()"
+            :disabled="!editorModeInstance || !editorName.trim()"
+            style="background: var(--accent)"
+          >
+            💾 Save
           </button>
         </div>
-        <label
-          >Playback Vol:
-          <input
-            type="range"
-            x-model.number="playbackVol"
-            min="0"
-            max="1"
-            step="0.1"
-        /></label>
       </div>
-      <div>
-        <template x-for="(rec, index) in recordings" :key="index">
-          <div class="track-item">
-            <div class="track-item-header">
-              <span x-text="`${rec.name} (${rec.data.length} notes)`"></span>
-              <div class="track-item-controls">
-                <span
-                  x-show="playingRecordings.has(index)"
-                  style="
-                    margin-right: 10px;
-                    color: var(--accent);
-                    font-size: 0.9rem;
-                  "
-                  x-text="getPlaybackTime(index)"
-                ></span>
-                <button
-                  class="icon-button play"
-                  @click="playRecording(index)"
-                  :title="playingRecordings.has(index) ? 'Pause' : 'Play'"
-                >
-                  <i
-                    data-lucide="play"
-                    x-show="!playingRecordings.has(index)"
-                  ></i>
-                  <i
-                    data-lucide="pause"
-                    x-show="playingRecordings.has(index)"
-                  ></i>
-                </button>
-                <button
-                  class="icon-button repeat"
-                  :class="{ active: recordingRepeat.has(index) }"
-                  @click="toggleRepeat(index)"
-                  title="Toggle repeat"
-                >
-                  <i data-lucide="repeat"></i>
-                </button>
-                <div style="position: relative">
-                  <button
-                    class="icon-button volume"
-                    @click.stop="toggleVolumePopover(index)"
-                    title="Volume"
-                  >
-                    <i data-lucide="volume-2"></i>
-                  </button>
-                  <div
-                    x-show="volumePopoverOpen === index"
-                    class="volume-popover"
-                    @click.stop
-                  >
-                    <div class="volume-slider-container">
-                      <label
-                        x-text="`Volume: ${Math.round((recordingVolumes.get(index) || 0.8) * 100)}%`"
-                      ></label>
-                      <input
-                        type="range"
-                        class="volume-slider"
-                        :value="recordingVolumes.get(index) || 0.8"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        @input="setRecordingVolume(index, $event.target.value)"
-                      />
-                    </div>
-                  </div>
+      <div class="editor-mode-container-wrapper">
+        <div class="editor-mode-main">
+          <canvas
+            x-ref="editorModeCanvas"
+            class="editor-mode-canvas"
+            @contextmenu.prevent
+          ></canvas>
+        </div>
+        <div class="editor-mode-sidebar">
+          <div class="editor-mode-sidebar-header">
+            <h3>Recordings</h3>
+            <button
+              @click="openEditorInMode(null)"
+              style="
+                background: var(--accent);
+                padding: 4px 12px;
+                font-size: 0.85rem;
+              "
+            >
+              + Create
+            </button>
+          </div>
+          <div class="editor-mode-recordings">
+            <template x-for="(rec, index) in recordings" :key="index">
+              <div class="editor-mode-recording-item">
+                <div class="editor-mode-recording-info">
+                  <span x-text="rec.name"></span>
+                  <span style="font-size: 0.8rem; color: #aaa" x-text="`${rec.data.length} notes`"></span>
                 </div>
-                <button @click="openEditor(index)" style="background: #4488ff">
+                <button
+                  @click="openEditorInMode(index)"
+                  style="background: #4488ff; padding: 4px 12px; font-size: 0.85rem"
+                >
                   Edit
                 </button>
-                <button class="danger" @click="deleteRecording(index)">
-                  X
-                </button>
               </div>
-            </div>
-            <div
-              x-show="playingRecordings.has(index) || recordingProgress.has(index) || (pausedRecordings && pausedRecordings.has(index))"
-              class="track-timeline-container"
-            >
-              <span
-                style="font-size: 0.8rem; color: #aaa; min-width: 50px"
-                x-text="formatTime(getRecordingCurrentTime(index))"
-              ></span>
-              <div
-                class="track-timeline"
-                @click="seekRecording(index, $event)"
-                @mousedown="startTimelineDrag(index, $event)"
-              >
-                <div
-                  class="track-timeline-progress"
-                  :style="`width: ${getRecordingProgress(index) * 100}%`"
-                ></div>
-                <div
-                  class="track-timeline-handle"
-                  :style="`left: ${getRecordingProgress(index) * 100}%`"
-                  @mousedown.stop="startTimelineDrag(index, $event)"
-                ></div>
-              </div>
-              <span
-                style="
-                  font-size: 0.8rem;
-                  color: #aaa;
-                  min-width: 50px;
-                  text-align: right;
-                "
-                x-text="formatTime(getRecordingDuration(index))"
-              ></span>
-            </div>
+            </template>
           </div>
-        </template>
+        </div>
       </div>
     </div>
+
+    <!-- Present Mode View -->
+    <div x-show="appMode === 'present'" class="present-mode-container" style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
+      <canvas x-ref="presentCanvas" class="present-canvas"></canvas>
+      <div class="present-keyboard-container">
+        <div class="present-piano-keys" x-ref="presentPianoKeys">
+          <template x-for="key in pianoKeys" :key="key.midi">
+            <div
+              :id="`present-key-${key.midi}`"
+              :class="`present-key ${key.isBlack ? 'black' : 'white'}`"
+              @mousedown="triggerNoteOn(key.midi)"
+              @mouseup="triggerNoteOff(key.midi)"
+              @mouseleave="triggerNoteOff(key.midi)"
+            >
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
 
     <!-- Marketplace Modal -->
     <div
