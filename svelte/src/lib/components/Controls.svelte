@@ -15,9 +15,10 @@
     
     // Present mode
     export let presentSongIndex;
-    export let presentSpeed;
     export let presentEffect;
     export let presentRecording;
+    export let presentStartDelay;
+    export let presentFallSpeed;
     export let recordings = [];
 
     const dispatch = createEventDispatcher();
@@ -101,20 +102,28 @@
                         <option value={index}>{rec.name}</option>
                     {/each}
                 </select>
-                <label>Speed:</label>
-                <input type="number" bind:value={presentSpeed} min="0.1" max="4" step="0.1" style="width: 60px">
                 <label>Effect:</label>
                 <select bind:value={presentEffect}>
+                    <option value="none">None</option>
                     <option value="particles">Particles</option>
-                    <option value="trails">Trails</option>
-                    <option value="waves">Waves</option>
                 </select>
+                <label>Start Delay:</label>
+                <input type="number" bind:value={presentStartDelay} min="0" max="20" step="0.5" style="width: 60px">
+                <span>s</span>
+                <label>Fall Speed:</label>
+                <input type="number" bind:value={presentFallSpeed} min="0.1" max="10" step="0.1" style="width: 60px">
                  <button 
                     class:active={presentRecording} 
                     style="color: #ff5555"
                     on:click={() => dispatch('togglePresentRecording')}
                 >
                     {presentRecording ? '■ Stop Recording' : '● Record'}
+                </button>
+                <button 
+                    disabled={presentSongIndex === -1}
+                    on:click={() => dispatch('restartPresentation')}
+                >
+                    ↻ Restart
                 </button>
              </div>
         {/if}

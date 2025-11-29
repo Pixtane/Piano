@@ -15,7 +15,8 @@ export function playRecording(
 
   const playbackInfo = {
     nodes: [],
-    startTime: performance.now() - (startTime * 1000) / speed, // Adjust start time for progress calc if needed
+    startTime: performance.now(), // Actual start time for progress calculation
+    seekOffset: startTime, // Offset in seconds for seeking
     duration: duration,
     speed: speed,
     timerInterval: null,

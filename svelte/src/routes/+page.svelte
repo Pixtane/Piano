@@ -65,9 +65,12 @@
 
   // Present Mode
   let presentSongIndex = -1;
-  let presentSpeed = 1.0;
-  let presentEffect = "particles";
+  let presentEffect = "none";
+  let presentStartDelay = 5.0;
+  let presentFallSpeed = 1.0;
   let presentRecording = false;
+  let presentRecordingData = null;
+  let presentPlaybackStartTime = 0;
 
   $: if (presentSongIndex !== -1 && appMode === 'present') {
       playPresentSong(presentSongIndex);
@@ -76,18 +79,52 @@
   $: if (appMode !== 'present' && presentSongIndex !== -1) {
       presentSongIndex = -1;
       stopAllPlayback();
+      presentRecordingData = null;
+      presentPlaybackStartTime = 0;
   }
   
   $: presentRecording = isRecording;
+  
+  // Update recording data for present mode when recording
+  $: if (isRecording && appMode === 'present' && currentRecordingData.length > 0) {
+      // Create a temporary recording object for visualization
+      const elapsed = (performance.now() - recordingStartTime) / 1000;
+      presentRecordingData = {
+          name: "Recording...",
+          data: currentRecordingData.map(e => ({
+              ...e,
+              time: e.time + elapsed
+          }))
+      };
+      if (presentPlaybackStartTime === 0) {
+          presentPlaybackStartTime = recordingStartTime;
+      }
+  }
+  
+  $: if (!isRecording && appMode === 'present') {
+      // Clear recording data when stopped
+      if (presentRecordingData && presentRecordingData.name === "Recording...") {
+          presentRecordingData = null;
+          presentPlaybackStartTime = 0;
+      }
+  }
 
-  function playPresentSong(index) {
+  async function playPresentSong(index) {
       stopAllPlayback(); // Stop others
       
       const rec = recordings[index];
       if (!rec) return;
       
+      // Ensure audio is initialized before starting playback
+      await startAudio();
+      
       playingRecordings.add(index);
       playingRecordings = playingRecordings;
+      
+      // Set recording data and start time for visualization
+      presentRecordingData = rec;
+      // Record actual start time (visualization will account for startDelay)
+      presentPlaybackStartTime = performance.now();
       
       const onKeyUpdate = (midi, active) => {
           if (active) activeNotes.add(midi);
@@ -95,16 +132,44 @@
           activeNotes = activeNotes;
       };
       
-      const info = playRecording(rec, 0.8, onKeyUpdate, () => {
-         playingRecordings.delete(index);
-         playingRecordings = playingRecordings;
-         activePlaybackInfos.delete(index);
-         activeNotes.clear();
-         activeNotes = activeNotes;
-         presentSongIndex = -1; // Reset selection
-      }, 0, presentSpeed);
+      // Delay audio playback by startDelay seconds
+      // This creates empty time at the beginning before the song starts
+      setTimeout(() => {
+          const info = playRecording(rec, 0.8, onKeyUpdate, () => {
+             playingRecordings.delete(index);
+             playingRecordings = playingRecordings;
+             activePlaybackInfos.delete(index);
+             activeNotes.clear();
+             activeNotes = activeNotes;
+             presentSongIndex = -1; // Reset selection
+             presentRecordingData = null;
+             presentPlaybackStartTime = 0;
+          }, 0, 1.0);
+          
+          activePlaybackInfos.set(index, info);
+      }, presentStartDelay * 1000);
+  }
+  
+  function restartPresentation() {
+      if (presentSongIndex === -1) return;
       
-      activePlaybackInfos.set(index, info);
+      // Stop current playback
+      stopAllPlayback();
+      
+      // Clear active notes
+      activeNotes.clear();
+      activeNotes = activeNotes;
+      
+      // Reset playback start time
+      presentPlaybackStartTime = 0;
+      
+      // Restart the song
+      const currentIndex = presentSongIndex;
+      presentSongIndex = -1; // Reset to trigger reactive statement
+      // Use setTimeout to ensure the reset is processed before restarting
+      setTimeout(() => {
+          presentSongIndex = currentIndex;
+      }, 0);
   }
   
   function togglePresentRecordingHandler() {
@@ -309,7 +374,7 @@
 
   // --- Playback ---
 
-  function togglePlay(index) {
+  async function togglePlay(index) {
       if (playingRecordings.has(index)) {
           // Stop
           const info = activePlaybackInfos.get(index);
@@ -317,8 +382,12 @@
           playingRecordings.delete(index);
           playingRecordings = playingRecordings; // trigger reactivity
           activePlaybackInfos.delete(index);
+          recordingProgressMap.delete(index);
+          recordingProgressMap = recordingProgressMap;
       } else {
-          // Start
+          // Start - ensure audio is initialized first
+          await startAudio();
+          
           playingRecordings.add(index);
           playingRecordings = playingRecordings;
           
@@ -338,6 +407,8 @@
              if (recordingRepeat.has(index)) {
                  // Replay
                  activePlaybackInfos.delete(index);
+                 recordingProgressMap.delete(index);
+                 recordingProgressMap = recordingProgressMap;
                  togglePlay(index); // Toggle off then on? No, togglePlay logic toggles.
                  // We need to restart.
                  // Hacky: just call this block again.
@@ -350,12 +421,17 @@
                  playingRecordings.delete(index);
                  playingRecordings = playingRecordings;
                  activePlaybackInfos.delete(index);
+                 recordingProgressMap.delete(index);
+                 recordingProgressMap = recordingProgressMap;
                  activeNotes.clear();
                  activeNotes = activeNotes;
              }
           });
           
           activePlaybackInfos.set(index, info);
+          // Initialize progress to 0
+          recordingProgressMap.set(index, info.seekOffset || 0);
+          recordingProgressMap = recordingProgressMap;
       }
   }
 
@@ -364,30 +440,45 @@
       activePlaybackInfos.clear();
       playingRecordings.clear();
       playingRecordings = playingRecordings;
+      recordingProgressMap.clear();
+      recordingProgressMap = recordingProgressMap;
       activeNotes.clear();
       activeNotes = activeNotes;
   }
 
   // Progress loop for UI
   function updateProgress() {
+      let hasUpdates = false;
       playingRecordings.forEach(index => {
           const info = activePlaybackInfos.get(index);
-          if (info) {
-              const elapsed = (performance.now() - info.startTime);
-              // Update map
-              // Svelte Map reactivity is limited, need to reassign or use Store.
-              // For animation frame, maybe just force update a timestamp or similar.
-              // Or use a reactive object.
-              recordingProgressMap.set(index, elapsed / 1000);
+          if (info && typeof info.startTime === 'number') {
+              const elapsed = (performance.now() - info.startTime) / 1000;
+              const speed = info.speed || 1.0;
+              const seekOffset = info.seekOffset || 0;
+              const currentTime = elapsed * speed + seekOffset;
+              // Only update if value changed to avoid unnecessary reactivity triggers
+              const oldTime = recordingProgressMap.get(index);
+              if (oldTime !== currentTime) {
+                  recordingProgressMap.set(index, currentTime);
+                  hasUpdates = true;
+              }
           }
       });
-      recordingProgressMap = recordingProgressMap; // Trigger
-      requestAnimationFrame(updateProgress);
+      if (hasUpdates) {
+          recordingProgressMap = recordingProgressMap; // Trigger reactivity
+      }
   }
   
+  let animationFrameId = null;
   onMount(() => {
-      const frame = requestAnimationFrame(updateProgress);
-      return () => cancelAnimationFrame(frame);
+      function loop() {
+          updateProgress();
+          animationFrameId = requestAnimationFrame(loop);
+      }
+      animationFrameId = requestAnimationFrame(loop);
+      return () => {
+          if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      };
   });
   
   // Getters for Recorder component
@@ -404,10 +495,79 @@
       return Math.min(1, getCurrentTime(index) / dur);
   };
 
-  function seek({ detail: { index, event } }) {
-      // Not implemented fully in playback.js yet (seek logic is complex with timeouts).
-      // Would need to cancel and restart at offset.
-      // For now, ignore or restart.
+  async function seek({ detail: { index, event, progress: providedProgress, isDragging } }) {
+      const rec = recordings[index];
+      if (!rec) return;
+      
+      let progress;
+      if (providedProgress !== undefined) {
+          // Progress was provided directly (from dragging)
+          progress = providedProgress;
+      } else {
+          // Calculate progress from click event
+          const timelineEl = event.currentTarget?.closest('.track-timeline') || event.currentTarget;
+          if (!timelineEl) return;
+          const rect = timelineEl.getBoundingClientRect();
+          const clickX = event.clientX - rect.left;
+          progress = Math.max(0, Math.min(1, clickX / rect.width));
+      }
+      
+      const sorted = [...rec.data].sort((a, b) => a.time - b.time);
+      const duration = sorted.length > 0 ? sorted[sorted.length - 1].time + 0.5 : 0;
+      const seekTime = progress * duration;
+      
+      const wasPlaying = playingRecordings.has(index);
+      const info = activePlaybackInfos.get(index);
+      const speed = info?.speed || 1.0;
+      
+      // Update progress immediately (for visual feedback)
+      recordingProgressMap.set(index, seekTime);
+      recordingProgressMap = recordingProgressMap;
+      
+      // If dragging, only update visual progress, don't restart playback
+      // Restart playback when drag ends (on mouseup)
+      if (isDragging) {
+          return;
+      }
+      
+      // Stop current playback if playing
+      if (wasPlaying && info) {
+          stopPlayback(info);
+          activePlaybackInfos.delete(index);
+      }
+      
+      // If it was playing, restart from seek position
+      if (wasPlaying) {
+          // Ensure audio is initialized before restarting playback
+          await startAudio();
+          
+          const vol = recordingVolumes.get(index) || 0.8;
+          
+          const onKeyUpdate = (midi, active) => {
+              if (active) activeNotes.add(midi);
+              else activeNotes.delete(midi);
+              activeNotes = activeNotes;
+          };
+          
+          const newInfo = playRecording(rec, vol, onKeyUpdate, () => {
+             // On complete
+             if (recordingRepeat.has(index)) {
+                 activePlaybackInfos.delete(index);
+                 playingRecordings.delete(index);
+                 togglePlay(index); 
+             } else {
+                 playingRecordings.delete(index);
+                 playingRecordings = playingRecordings;
+                 activePlaybackInfos.delete(index);
+                 recordingProgressMap.delete(index);
+                 recordingProgressMap = recordingProgressMap;
+                 activeNotes.clear();
+                 activeNotes = activeNotes;
+             }
+          }, seekTime, speed);
+          
+          activePlaybackInfos.set(index, newInfo);
+      }
   }
 
   function setVolume({ detail: { index, volume } }) {
@@ -475,8 +635,9 @@
     recordingTime={recordingTime}
     
     bind:presentSongIndex
-    bind:presentSpeed
     bind:presentEffect
+    bind:presentStartDelay
+    bind:presentFallSpeed
     bind:presentRecording
     recordings={recordings}
     
@@ -484,6 +645,7 @@
     on:toggleMetronome={toggleMetronome}
     on:toggleRecord={toggleRecord}
     on:togglePresentRecording={togglePresentRecordingHandler}
+    on:restartPresentation={restartPresentation}
     on:openMarketplace={() => showMarketplace = true}
 />
 
@@ -566,8 +728,12 @@
         <PresentMode 
             {activeNotes} 
             {pianoKeys}
+            {pianoWidth}
             effect={presentEffect}
-            speed={presentSpeed}
+            startDelay={presentStartDelay}
+            fallSpeed={presentFallSpeed}
+            recordingData={presentRecordingData}
+            playbackStartTime={presentPlaybackStartTime}
         />
     {/if}
 </div>

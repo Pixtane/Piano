@@ -17,6 +17,12 @@
     
     // Local state for volume popover
     let volumePopoverOpen = null;
+    
+    // Local state for timeline dragging
+    let draggingIndex = null;
+    let dragStartX = 0;
+    let dragAnimationFrame = null;
+    let dragTimelineEl = null;
 
     const dispatch = createEventDispatcher();
 
@@ -26,6 +32,112 @@
         } else {
             volumePopoverOpen = index;
         }
+    }
+    
+    // Force reactivity by tracking the map
+    // This ensures the component re-renders when the map is updated
+    $: progressKeys = Array.from(recordingProgress.keys());
+    $: progressSize = recordingProgress.size;
+    
+    // Helper functions that use the reactive recordingProgress prop
+    function getCurrentTimeReactive(index) {
+        // Reference progressSize to ensure reactivity
+        const _ = progressSize; // Force dependency
+        return recordingProgress.get(index) || 0;
+    }
+    
+    function getProgressReactive(index) {
+        const dur = getDuration(index);
+        if (dur === 0) return 0;
+        // Reference progressSize to ensure reactivity
+        const _ = progressSize; // Force dependency
+        const current = recordingProgress.get(index) || 0;
+        return Math.min(1, current / dur);
+    }
+    
+    // Create a reactive object that tracks progress for each recording
+    // This ensures Svelte tracks changes to individual values
+    $: progressValues = Object.fromEntries(recordingProgress);
+    
+    function handleTimelineMouseDown(index, event) {
+        event.preventDefault();
+        draggingIndex = index;
+        dragStartX = event.clientX;
+        
+        // Store reference to timeline element
+        dragTimelineEl = event.currentTarget.closest('.track-timeline') || event.currentTarget;
+        
+        // Calculate initial seek position
+        const rect = dragTimelineEl.getBoundingClientRect();
+        const clickX = event.clientX - rect.left;
+        const progress = Math.max(0, Math.min(1, clickX / rect.width));
+        
+        // Seek immediately on mousedown (not dragging yet, so restart playback)
+        dispatch('seek', { index, event, progress, isDragging: false });
+        
+        let lastMouseX = event.clientX;
+        
+        // Use requestAnimationFrame for smooth, frequent updates (60fps)
+        const updateDrag = () => {
+            if (draggingIndex !== index || !dragTimelineEl) {
+                dragAnimationFrame = null;
+                return;
+            }
+            
+            const currentRect = dragTimelineEl.getBoundingClientRect();
+            const mouseX = lastMouseX - currentRect.left;
+            const progress = Math.max(0, Math.min(1, mouseX / currentRect.width));
+            
+            // Update visual progress only while dragging
+            dispatch('seek', { index, event: { clientX: lastMouseX }, progress, isDragging: true });
+            
+            dragAnimationFrame = requestAnimationFrame(updateDrag);
+        };
+        
+        // Add global mouse handlers
+        const handleMouseMove = (e) => {
+            if (draggingIndex !== index) return;
+            
+            lastMouseX = e.clientX;
+            
+            // Start animation frame loop if not already running
+            if (!dragAnimationFrame) {
+                dragAnimationFrame = requestAnimationFrame(updateDrag);
+            }
+        };
+        
+        const handleMouseUp = (e) => {
+            if (draggingIndex === index) {
+                // Cancel animation frame
+                if (dragAnimationFrame) {
+                    cancelAnimationFrame(dragAnimationFrame);
+                    dragAnimationFrame = null;
+                }
+                
+                // Final seek when drag ends - restart playback if needed
+                const currentRect = dragTimelineEl.getBoundingClientRect();
+                const mouseX = e.clientX - currentRect.left;
+                const finalProgress = Math.max(0, Math.min(1, mouseX / currentRect.width));
+                dispatch('seek', { index, event: e, progress: finalProgress, isDragging: false });
+                
+                draggingIndex = null;
+                dragTimelineEl = null;
+                document.removeEventListener('mousemove', handleMouseMove);
+                document.removeEventListener('mouseup', handleMouseUp);
+                window.removeEventListener('mouseleave', handleMouseUp);
+                document.body.style.userSelect = '';
+                document.body.style.cursor = '';
+            }
+        };
+        
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+        window.addEventListener('mouseleave', handleMouseUp);
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'pointer';
+        
+        // Start the animation frame loop immediately for continuous updates
+        dragAnimationFrame = requestAnimationFrame(updateDrag);
     }
 </script>
 
@@ -51,8 +163,9 @@
                     <span>{rec.name} ({rec.data.length} notes)</span>
                     <div class="track-item-controls">
                         {#if playingRecordings.has(index)}
+                            {@const currentTime = recordingProgress.get(index) || 0}
                             <span style="margin-right: 10px; color: var(--accent); font-size: 0.9rem;">
-                                {formatTime(getCurrentTime(index))}
+                                {formatTime(currentTime)}
                             </span>
                         {/if}
                         
@@ -104,17 +217,27 @@
                 </div>
                 
                 {#if playingRecordings.has(index) || recordingProgress.has(index)}
+                     {@const currentTime = recordingProgress.get(index) || 0}
+                     {@const progress = getDuration(index) > 0 ? Math.min(1, currentTime / getDuration(index)) : 0}
                      <div class="track-timeline-container">
                         <span style="font-size: 0.8rem; color: #aaa; min-width: 50px">
-                            {formatTime(getCurrentTime(index))}
+                            {formatTime(currentTime)}
                         </span>
                         <!-- svelte-ignore a11y-click-events-have-key-events -->
                         <!-- svelte-ignore a11y-no-static-element-interactions -->
                         <div 
                             class="track-timeline" 
-                            on:click={(e) => dispatch('seek', { index, event: e })}
+                            data-timeline-index={index}
+                            style="cursor: pointer; user-select: none;"
+                            on:mousedown={(e) => handleTimelineMouseDown(index, e)}
+                            on:click={(e) => {
+                                // Only handle click if not dragging
+                                if (draggingIndex === null) {
+                                    dispatch('seek', { index, event: e });
+                                }
+                            }}
                         >
-                            <div class="track-timeline-progress" style="width: {getProgress(index) * 100}%"></div>
+                            <div class="track-timeline-progress" style="width: {progress * 100}%"></div>
                         </div>
                         <span style="font-size: 0.8rem; color: #aaa; min-width: 50px; text-align: right;">
                             {formatTime(getDuration(index))}
