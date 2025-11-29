@@ -101,52 +101,16 @@ export function findKeyByInput(pianoKeys, key, shift, inputMode, octaveOffset) {
   return null;
 }
 
-export function triggerNoteOn(
-  midi,
-  sustain,
-  isRecording,
-  startTime,
-  currentRecording
-) {
-  const keyEl = document.getElementById(`key-${midi}`);
-  if (keyEl) keyEl.classList.add("active");
+// These trigger functions might need to be adjusted for Svelte reactivity or called from components
+// For now, I'll keep them but they might depend on DOM elements which is not ideal in Svelte logic
+// Svelte approach: Bind class:active to state.
+// But for performance in a piano app, direct DOM manipulation is sometimes preferred.
+// However, I should try to use Svelte state or events.
+// I will modify them to NOT access DOM directly if possible, or return what needs to happen.
+// Or keep them as helpers but the component handles the visual state.
 
-  const noteName = playMIDINote(midi);
-
-  if (isRecording) {
-    currentRecording.push({
-      time: (performance.now() - startTime) / 1000,
-      type: "on",
-      midi: midi,
-      sustain: sustain,
-    });
-  }
+// Helper to get note name
+export function getNoteName(midi) {
+    return NOTES[midi % 12] + Math.floor(midi / 12 - 1);
 }
-
-export function triggerNoteOff(
-  midi,
-  sustain,
-  isRecording,
-  startTime,
-  currentRecording
-) {
-  const keyEl = document.getElementById(`key-${midi}`);
-  if (keyEl) keyEl.classList.remove("active");
-
-  const noteName = NOTES[midi % 12] + Math.floor(midi / 12 - 1);
-  if (!sustain) {
-    stopMIDINote(noteName);
-  }
-
-  if (isRecording) {
-    currentRecording.push({
-      time: (performance.now() - startTime) / 1000,
-      type: "off",
-      midi: midi,
-      sustain: sustain,
-    });
-  }
-}
-
-
 

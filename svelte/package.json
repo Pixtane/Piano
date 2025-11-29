@@ -1,0 +1,27 @@
+{
+  "name": "virtuoso-piano-svelte",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-auto": "^3.0.0",
+    "@sveltejs/kit": "^2.0.0",
+    "@sveltejs/vite-plugin-svelte": "^3.0.0",
+    "svelte": "^4.2.7",
+    "vite": "^5.0.3"
+  },
+  "dependencies": {
+    "lucide-svelte": "^0.294.0",
+    "tone": "^14.8.49",
+    "jsmidgen": "^0.1.8",
+    "midi-file": "^1.2.4"
+  },
+  "overrides": {
+    "cookie": "^0.7.0",
+    "esbuild": "^0.25.0"
+  }
+}

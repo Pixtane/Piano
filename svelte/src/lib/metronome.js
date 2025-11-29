@@ -1,19 +1,22 @@
 import { playMetronomeBeat } from "./audio.js";
 
-export function createMetronome(bpm, timeSig, metroTimer) {
+export function createMetronome(bpm, timeSig) {
   const interval = 60000 / bpm;
   const beats = timeSig;
   let beatCount = 0;
+  let timerId = null;
 
   const tick = () => {
     const isDownbeat = beatCount % beats === 0;
     playMetronomeBeat(isDownbeat);
     beatCount++;
-    return setTimeout(tick, interval);
+    timerId = setTimeout(tick, interval);
   };
 
-  return tick();
+  tick();
+
+  return () => {
+      if (timerId) clearTimeout(timerId);
+  };
 }
-
-
 
