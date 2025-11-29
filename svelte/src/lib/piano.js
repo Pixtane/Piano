@@ -16,7 +16,7 @@ export function initPiano(octaveOffset = 3) {
       noteName: noteName,
       octave: octave,
       isBlack: isBlack,
-      leftPos: isBlack ? whiteKeyOffset * 52 - 17 : 0,
+      leftPos: isBlack ? whiteKeyOffset * 52 - 17 : whiteKeyOffset * 52,
       keyBind: "",
     };
 
@@ -111,6 +111,5 @@ export function findKeyByInput(pianoKeys, key, shift, inputMode, octaveOffset) {
 
 // Helper to get note name
 export function getNoteName(midi) {
-    return NOTES[midi % 12] + Math.floor(midi / 12 - 1);
+  return NOTES[midi % 12] + Math.floor(midi / 12 - 1);
 }
-

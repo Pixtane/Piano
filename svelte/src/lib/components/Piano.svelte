@@ -31,7 +31,7 @@
       <div
         id="key-{key.midi}"
         class="key {key.isBlack ? 'black' : 'white'} {activeNotes.has(key.midi) ? 'active' : ''}"
-        style={key.isBlack ? `left: ${key.leftPos}px` : ''}
+        style={`left: ${key.leftPos}px`}
         on:mousedown={() => handleMouseDown(key.midi)}
         on:mouseup={() => handleMouseUp(key.midi)}
         on:mouseleave={() => handleMouseLeave(key.midi)}

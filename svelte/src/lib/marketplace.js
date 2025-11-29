@@ -22,6 +22,9 @@ export async function saveSongToServer(songData) {
       },
       body: JSON.stringify(songData),
     });
+    if (!response.ok) {
+      throw new Error(`Server error: ${response.status}`);
+    }
     return await response.json();
   } catch (error) {
     console.error("Error saving song:", error);
@@ -42,6 +45,20 @@ export function parseMidiFile(arrayBuffer, fileName) {
     // Check for MIDI header
     if (String.fromCharCode(data[0], data[1], data[2], data[3]) !== "MThd") {
       return null;
+    }
+
+    // Read division (ticks per quarter note) from bytes 12-13 (16-bit big-endian)
+    let division = 480; // Default fallback
+    try {
+      if (data.length >= 14) {
+        division = (data[12] << 8) | data[13];
+        // Validate division (should be positive, reasonable range)
+        if (division <= 0 || division > 32767) {
+          division = 480; // Fallback if invalid
+        }
+      }
+    } catch (error) {
+      division = 480; // Fallback if parsing fails
     }
 
     // Skip to track data
@@ -90,7 +107,7 @@ export function parseMidiFile(arrayBuffer, fileName) {
             const velocity = data[i++];
 
             if (velocity > 0 && note >= 21 && note <= 108) {
-              const time = (trackTime * tempo) / (480 * 1000000); // Convert to seconds
+              const time = (trackTime * tempo) / (division * 1000000); // Convert to seconds
               events.push({
                 time: time,
                 type: "on",
@@ -98,16 +115,13 @@ export function parseMidiFile(arrayBuffer, fileName) {
                 sustain: true,
               });
             }
-          } else if (
-            eventType === 0x80 ||
-            (status === 0x90 && data[i + 1] === 0)
-          ) {
+          } else if (eventType === 0x80) {
             // Note Off
-            const note = eventType === 0x80 ? data[i++] : data[i - 1];
+            const note = data[i++];
             i++; // Skip velocity
 
             if (note >= 21 && note <= 108) {
-              const time = (trackTime * tempo) / (480 * 1000000);
+              const time = (trackTime * tempo) / (division * 1000000);
               events.push({
                 time: time,
                 type: "off",
@@ -118,10 +132,11 @@ export function parseMidiFile(arrayBuffer, fileName) {
           } else if (status === 0xff && data[i] === 0x51) {
             // Tempo change
             i++;
-            const tempoBytes = data.slice(i, i + 3);
+            const len = data[i++];
+            const tempoBytes = data.slice(i, i + len);
             tempo =
               (tempoBytes[0] << 16) | (tempoBytes[1] << 8) | tempoBytes[2];
-            i += 3;
+            i += len;
           } else {
             // Skip other events
             if (eventType === 0xc0 || eventType === 0xd0) {
@@ -171,16 +186,16 @@ export function playPreview(data, playbackVol, onKeyActive) {
     const timer = setTimeout(() => {
       const midi = event.midi;
       const noteName = NOTES[midi % 12] + Math.floor(midi / 12 - 1);
-      
+
       if (event.type === "on") {
-        if(onKeyActive) onKeyActive(midi, true);
+        if (onKeyActive) onKeyActive(midi, true);
         playMIDINote(midi, playbackVol);
       } else if (event.type === "off") {
         const wasSustained = event.sustain === true;
         if (!wasSustained) {
           stopMIDINote(noteName);
         }
-        if(onKeyActive) onKeyActive(midi, false);
+        if (onKeyActive) onKeyActive(midi, false);
       }
     }, delayMs);
 
@@ -188,7 +203,7 @@ export function playPreview(data, playbackVol, onKeyActive) {
   });
 
   const cleanupTimer = setTimeout(() => {
-    stopPreview(playbackInfo);
+    stopPreview(playbackInfo, onKeyActive);
   }, duration * 1000 + 100);
 
   playbackInfo.nodes.push(cleanupTimer);
@@ -208,4 +223,3 @@ export function stopPreview(previewPlaybackInfo, onKeyActive) {
   // If provided, callback to clear all active keys
   if (onKeyActive) onKeyActive(null, false, true); // true = clear all
 }
-
